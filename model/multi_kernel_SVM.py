@@ -226,12 +226,12 @@ class multi_kernel_SVM (SVC):
                 for j in range(0, space_dim):
                     term *= np.sin(np.pi/2*angles[j])
 
-                    if space_dim < len(angles):
-                        # All coordinates x1, x2, x3, ... x_(n-1) except x_n are:
-                        # sin(a)*sin(b)*...*sin(y)*cos(z)
-                        term *= np.cos(np.pi/2*angles[space_dim])
+                if space_dim < len(angles):
+                    # All coordinates x1, x2, x3, ... x_(n-1) except x_n are:
+                    # sin(a)*sin(b)*...*sin(y)*cos(z)
+                    term *= np.cos(np.pi/2*angles[space_dim])
 
-                    spherical_unit_vec.append(term)
+                spherical_unit_vec.append(term)
 
             # "weights" is a point on x+y+z+... = 1 plane
             # At the end, weights should sum up to 1.
