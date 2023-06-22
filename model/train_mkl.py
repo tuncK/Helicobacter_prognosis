@@ -35,16 +35,26 @@ for data_table in data_tables:
     best_conf = startBOHB.start_BOHB(min_budget=30, max_budget=100, data_table=data_table, n_workers=6, n_iterations=10)
 
     # This time, we need to save the result (and feed into the classifier later on)
-    (grad_threshold, dim, seed) = MyWorker.extract_convert_params(best_conf)
+    (grad_threshold, dim, seed, AE_type) = MyWorker.extract_convert_params(best_conf)
     dims.append(dim)
 
     m = autoencoders.Modality(data=data_table, dims=dim, seed=seed, clipnorm_lim=grad_threshold)
 
     # load data into the object
     m.load_data(dtype='int64')
+    
+    # Decide on which AE worked the best and use.
+    if AE_type in ['AE', 'SAE', 'DAE']:
+        ae_func = m.ae
+    elif AE_type == 'CAE':
+        ae_func = m.cae
+    elif AE_type == 'VAE':
+        ae_func = m.vae
+    else:
+        raise NameError('Autoencoder type %s is not available' % AE_type)
 
     # Representation learning, no time limit
-    m.ae(dims=[dim], loss='mse', verbose=1, save_model=True)
+    ae_func(dims=[dim], loss='mse', verbose=1, save_model=True)
     latent_rep = m.get_transformed_data()
 
     # Retrieved AE-compressed feature set and keep in a big matrix.

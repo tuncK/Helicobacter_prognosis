@@ -16,6 +16,8 @@ import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 from sklearn.model_selection import StratifiedKFold
 from sklearn.model_selection import GridSearchCV
+from sklearn.decomposition import PCA
+from sklearn.random_projection import GaussianRandomProjection
 from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import roc_auc_score
@@ -30,14 +32,16 @@ from skopt.space import Real, Categorical
 
 # importing keras
 import keras
+import keras.backend as K
 from keras.wrappers.scikit_learn import KerasClassifier
-from keras.callbacks import EarlyStopping, ModelCheckpoint
+from keras.callbacks import EarlyStopping, ModelCheckpoint, LambdaCallback
 from keras.models import Model, load_model
 from keras.optimizers import Adam
 
 # importing util libraries
 import os
 import time
+import math
 
 # importing custom library
 import DNN_models
@@ -65,15 +69,21 @@ class Modality(object):
         If the norm of the gradient exceeds this threshold, it will be scaled down to this value.
         The lower is the more stable, at the expense of increased the training duration.
 
-    seed : Seed for the number random generator. Defaults to 0.
+    max_training_duration : int
+        Maximum duration to be allowed for the AE training step to take. Walltime measured in seconds,
+        by default the training duration is unlimited.
+
+    seed : int
+        Seed for the number random generator. Defaults to 0.
     """
 
-    def __init__(self, data, dims, clipnorm_lim=1, seed=0):
+    def __init__(self, data, dims, clipnorm_lim=1, seed=0, max_training_duration=np.inf):
         self.t_start = time.time()
         self.filename = str(data)
         self.data = self.filename.split('/')[-1].split('.')[0]
         self.seed = seed
         self.dims = dims
+        self.max_training_duration = max_training_duration
         self.prefix = ''
         self.representation_only = False
         self.clipnorm_lim = clipnorm_lim
@@ -129,15 +139,13 @@ class Modality(object):
 
         # Label data validity check
         if not labels.values.shape[1] > 1:
-            label_flatten = labels.values.reshape((labels.values.shape[0]))
+            label_flatten = labels.values.reshape((labels.values.shape[0])).astype(dtype)
         else:
             raise IndexError('The label file contains more than 1 column.')
 
         # train and test split
-        self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(self.X_train.astype(dtype),
-                                                                                label_flatten.astype('int'), test_size=0.2,
-                                                                                random_state=self.seed,
-                                                                                stratify=label_flatten)
+        split_data = train_test_split(self.X_train, label_flatten, test_size=0.2, random_state=self.seed, stratify=label_flatten)
+        self.X_train, self.X_test, self.y_train, self.y_test = split_data
         self.printDataShapes()
 
     def get_transformed_data(self):
@@ -149,11 +157,69 @@ class Modality(object):
         out.columns = self.dataset_ids
         return out
 
+    # Principal Component Analysis
+    def pca(self, ratio_threshold=0.99, save_model=False):
+        # Generate an experiment identifier string for the output files
+        self.prefix = self.prefix + 'PCA_'
+
+        # Perform PCA
+        pca = PCA()
+        pca.fit(self.X_train)
+
+        # Evaluate the number of components that collectively explain
+        # threshold-fraction of the observed variance.
+        ratio_sum = np.cumsum(pca.explained_variance_ratio_)
+        n_comp = sum(ratio_sum < ratio_threshold) + 1
+
+        # Repeat PCA with n-many components only.
+        pca = PCA(n_components=n_comp)
+        pca.fit(self.X_train)
+
+        # applying the eigenvectors to the whole training and the test set.
+        if save_model:
+            self.X_train = pca.transform(self.X_train)
+            self.X_test = pca.transform(self.X_test)
+            self.printDataShapes()
+
+    # Gausian Random Projection
+    def grp(self, eps=0.1, save_model=False):
+        # Generate an experiment identifier string for the output files
+        self.prefix = self.prefix + 'GRP_'
+
+        # Perform GRP
+        rf = GaussianRandomProjection(eps)
+        rf.fit(self.X_train)
+
+        if save_model:
+            # applying GRP to the whole training and the test set.
+            self.X_train = rf.transform(self.X_train)
+            self.X_test = rf.transform(self.X_test)
+            self.printDataShapes()
+
+    # Custom keras callback function to limit total training time
+    # This is needed for early stopping the procedure during BOHB
+    class TimeLimit_Callback(keras.callbacks.Callback):
+        def __init__(self, verbose=False, max_training_duration=np.inf):
+            self.training_start_time = time.time()
+            self.verbose = verbose
+            self.max_training_duration = max_training_duration
+
+        def on_epoch_end(self, epoch, logs={}):
+            duration = time.time() - self.training_start_time
+            if self.verbose:
+                print('%ds passed so far' % duration)
+
+            if duration >= self.max_training_duration:
+                print('Training exceeded time limit (max=%ds), stopping...'
+                      % self.max_training_duration)
+                self.model.stop_training = True
+                self.stopped_epoch = epoch
+
     # Shallow Autoencoder & Deep Autoencoder
-    def ae(self, dims=[50], epochs=10000, batch_size=100, verbose=2, loss='mean_squared_error', latent_act=False, output_act=False, act='relu', patience=20, val_rate=0.2, max_training_duration=np.inf, save_model=False):
+    def ae(self, dims=[50], epochs=10000, batch_size=100, verbose=2, loss='mean_squared_error', latent_act=False, output_act=False, act='relu', patience=20, val_rate=0.2, save_model=False):
 
         """
-        Train the auto-encoder
+        Train the shallow (1-layer) or deep (>1 layers) auto-encoder
 
         Parameters
         ----------
@@ -171,7 +237,11 @@ class Modality(object):
             2 -
 
         loss : str
-            Parameter to watch the loss by, dafaults to mean_squared_error. Refer to keras docs.
+            Parameter to watch the loss by, dafaults to mean_squared_error ('mse').
+            Refer to keras docs: https://keras.io/api/losses/
+
+        act : str
+            Actovatopm function to use. 'relu' by default.
 
         latent_act : bool
             Whether to use activation function for the latent layer. False by default.
@@ -180,14 +250,10 @@ class Modality(object):
             Whether to use activation function for the output layer. False by default.
 
         patience : int
-            20 by default
+            Number of epochs to continue training after a non-decreasing valdation loss. 20 by default.
 
         val_rate : float
-            0.2 by default
-
-        max_training_duration : int
-            Maximum duration to be allowed for the training step to take. Walltime measured in seconds,
-            by default the training duration is unlimited.
+            Fraction of data to be set aside as the validation set. 0.2 by default.
 
         save_model : bool
             Whether to save the model parameters during training, false by default. Enabling during
@@ -195,7 +261,7 @@ class Modality(object):
             might also result in a race condition if target file names are not distinct.
         """
 
-        # manipulating an experiment identifier in the output file
+        # Generate an experiment identifier string for the output files
         if patience != 20:
             self.prefix += 'p' + str(patience) + '_'
         if len(dims) == 1:
@@ -212,27 +278,10 @@ class Modality(object):
         if act == 'sigmoid':
             self.prefix = self.prefix + 's'
 
-        # Custom keras callback function to limit total training time
-        # This is needed for early stopping the procedure during BOHB
-        class TimeLimit_Callback(keras.callbacks.Callback):
-            def __init__(self, verbose=False):
-                self.training_start_time = time.time()
-                self.verbose = verbose
-
-            def on_epoch_end(self, epoch, logs={}):
-                duration = time.time() - self.training_start_time
-                if self.verbose:
-                    print('%ds passed so far' % duration)
-
-                if duration >= max_training_duration:
-                    print('Training exceeded time limit (max=%ds), stopping...' % max_training_duration)
-                    self.model.stop_training = True
-                    self.stopped_epoch = epoch
-
         # callbacks for each epoch
         # Disabling model saving improves the execution speed, especially if model size is big
         callbacks = [EarlyStopping(monitor='val_loss', patience=patience, mode='min', verbose=1),
-                     TimeLimit_Callback()]
+                     self.TimeLimit_Callback(max_training_duration=self.max_training_duration)]
 
         # Exports the model to file at each iteration.
         # Due to early stopping, the final model is not necessarily the best model.
@@ -276,6 +325,249 @@ class Modality(object):
             # applying the learned encoder to the entire training and the test sets.
             self.X_train = self.encoder.predict(self.X_train)
             self.X_test = self.encoder.predict(self.X_test)
+
+
+    def vae(self, dims=[10], epochs=10000, batch_size=100, verbose=2, loss='mse', output_act=False, act='relu', patience=25, beta=1.0, warmup=True, warmup_rate=0.01, val_rate=0.2, save_model=False):
+        """
+        Train the variational autoencoder (VAE)
+
+        Parameters
+        ----------
+        dims : int or ndarray of shape (`n_layers`)
+            Number of dimensions to include in the latent layer (and other intermediate layers)
+
+        epochs : int
+            Maximum number of epochs to train the AE. Defaults to 10000. The early stopping
+            might make it stop earlier than specified here.
+
+        verbose : int
+            Verbosity level
+            0 -
+            1 -
+            2 -
+
+        loss : str
+            Parameter to watch the loss by, dafaults to mean_squared_error ('mse').
+            Refer to keras docs: https://keras.io/api/losses/
+
+        act : str
+            Actovation function to use. 'relu' by default.
+
+        output_act : bool
+            Whether to use activation function for the output layer. False by default.
+
+        patience : int
+            Number of epochs to continue training after a non-decreasing valdation loss. 25 by default.
+
+        val_rate : float
+            Fraction of data to be set aside as the validation set. 0.2 by default.
+
+        warmup : bool
+            Whether to use warmup strategy for the VAE initialisation. True by default.
+            Enabling results in more active units at the early epochs, which would be gradually
+            pruned away and might improve learning performance.
+
+        warmup_rate : float
+            
+        beta : float
+
+        save_model : bool
+            Whether to save the model parameters during training, false by default. Enabling during
+            hyperparameter tuning might slow down the operations. Enabling during parallel execution
+            might also result in a race condition if target file names are not distinct.
+        """
+
+        # Generate an experiment identifier string for the output files
+        if patience != 25:
+            self.prefix += 'p' + str(patience) + '_'
+        if warmup:
+            self.prefix += 'w' + str(warmup_rate) + '_'
+        self.prefix += 'VAE'
+        if loss == 'binary_crossentropy':
+            self.prefix += 'b'
+        if output_act:
+            self.prefix += 'T'
+        if beta != 1:
+            self.prefix += 'B' + str(beta)
+        self.prefix += str(dims).replace(", ", "-") + '_'
+        if act == 'sigmoid':
+            self.prefix += 'sig_'
+
+        # callbacks for each epoch
+        callbacks = [EarlyStopping(monitor='val_loss', patience=patience, mode='min', verbose=1),
+                     self.TimeLimit_Callback(max_training_duration=self.max_training_duration)]
+
+        # Exports the model to file at each iteration.
+        # Due to early stopping, the final model is not necessarily the best model.
+        # Constant disk IO may slow down the training considerably.
+        if save_model:
+            model_out_file = self.output_dir + '/' + self.modelName + '.h5'
+            model_write_callback = ModelCheckpoint(model_out_file, monitor='val_loss', mode='min', verbose=1, save_best_only=True, save_weights_only=True),
+            callbacks.append(model_write_callback)
+
+            # clean up model checkpoint before use
+            if os.path.isfile(model_out_file):
+                os.remove(model_out_file)
+
+        # Add warm-up callback, if so requested
+        if warmup:
+            # warm-up implementation
+            def warm_up(epoch):
+                val = epoch * warmup_rate
+                if val <= 1.0:
+                    K.set_value(beta, val)
+
+            beta = K.variable(value=0.0)
+            warm_up_cb = LambdaCallback(on_epoch_end=lambda epoch, logs: [warm_up(epoch)])
+            callbacks.append(warm_up_cb)
+
+        # spliting the training set into the inner-train and the inner-test set (validation set)
+        X_inner_train, X_inner_test, y_inner_train, y_inner_test = train_test_split(self.X_train, self.y_train,
+                                                                                    test_size=val_rate,
+                                                                                    random_state=self.seed,
+                                                                                    stratify=self.y_train)
+
+        # insert input shape into dimension list
+        dims.insert(0, X_inner_train.shape[1])
+
+        # create vae model
+        self.vae, self.encoder, self.decoder = DNN_models.variational_AE(dims, act=act, recon_loss=loss, output_act=output_act, beta=beta)
+        self.vae.summary()
+
+        # fit
+        self.history = self.vae.fit(X_inner_train, epochs=epochs, batch_size=batch_size, callbacks=callbacks, verbose=verbose, validation_data=(X_inner_test, None))
+
+        # save loss progress
+        self.saveLossProgress()
+
+        if save_model:
+            # load best model
+            self.vae.load_weights(model_out_file)
+            self.encoder = self.vae.layers[1]
+
+            # applying the learned encoder into the whole training and the test set.
+            _, _, self.X_train = self.encoder.predict(self.X_train)
+            _, _, self.X_test = self.encoder.predict(self.X_test)
+
+    # Convolutional Autoencoder
+    def cae(self, dims=[32], epochs=10000, batch_size=100, verbose=2, loss='mse', output_act=False, act='relu', patience=25, val_rate=0.2, rf_rate=0.1, st_rate=0.25, save_model=False):
+        """
+        Train the convolutional autoencoder (CAE)
+
+        Parameters
+        ----------
+        dims : int or ndarray of shape (`n_layers`)
+            Number of dimensions to include in the latent layer (and other intermediate layers)
+
+        epochs : int
+            Maximum number of epochs to train the AE. Defaults to 10000. The early stopping
+            might make it stop earlier than specified here.
+
+        verbose : int
+            Verbosity level
+            0 -
+            1 -
+            2 -
+
+        loss : str
+            Parameter to watch the loss by, dafaults to mean_squared_error ('mse').
+            Refer to keras docs: https://keras.io/api/losses/
+
+        act : str
+            Actovaton function to use. 'relu' by default.
+
+        output_act : bool
+            Whether to use activation function for the output layer. False by default.
+
+        patience : int
+            Number of epochs to continue training after a non-decreasing valdation loss. 25 by default.
+
+        val_rate : float in [0,1]
+            Fraction of data to be set aside as the validation set. 0.2 by default.
+
+        rf_rate : float in [0,1]
+            Receptive Field (RF) size experessed as a fraction of the input layer dimension.
+            0.1 by default.
+
+        st_rate : float in [0,1]
+            Stride size experessed as a fraction of the input layer dimension. 0.25 by default.
+
+        save_model : bool
+            Whether to save the model parameters during training, false by default. Enabling during
+            hyperparameter tuning might slow down the operations. Enabling during parallel execution
+            might also result in a race condition if target file names are not distinct.
+        """
+
+        # Generate an experiment identifier string for the output files
+        self.prefix += 'CAE'
+        if loss == 'binary_crossentropy':
+            self.prefix += 'b'
+        if output_act:
+            self.prefix += 'T'
+        self.prefix += str(dims).replace(", ", "-") + '_'
+        if act == 'sigmoid':
+            self.prefix += 'sig_'
+
+        # callbacks for each epoch
+        callbacks = [EarlyStopping(monitor='val_loss', patience=patience, mode='min', verbose=1),
+                     self.TimeLimit_Callback(max_training_duration=self.max_training_duration)]
+
+        # Exports the model to file at each iteration.
+        # Due to early stopping, the final model is not necessarily the best model.
+        # Constant disk IO may slow down the training considerably.
+        if save_model:
+            model_out_file = self.output_dir + '/' + self.modelName + '.h5'
+            model_write_callback = ModelCheckpoint(model_out_file, monitor='val_loss', mode='min', verbose=1, save_best_only=True, save_weights_only=True),
+            callbacks.append(model_write_callback)
+
+            # clean up model checkpoint before use
+            if os.path.isfile(model_out_file):
+                os.remove(model_out_file)
+
+        # fill out blank
+        onesideDim = int(math.sqrt(self.X_train.shape[1])) + 1
+        enlargedDim = onesideDim ** 2
+        self.X_train = np.column_stack((self.X_train, np.zeros((self.X_train.shape[0], enlargedDim - self.X_train.shape[1]))))
+        self.X_test = np.column_stack((self.X_test, np.zeros((self.X_test.shape[0], enlargedDim - self.X_test.shape[1]))))
+
+        # reshape
+        self.X_train = np.reshape(self.X_train, (len(self.X_train), onesideDim, onesideDim, 1))
+        self.X_test = np.reshape(self.X_test, (len(self.X_test), onesideDim, onesideDim, 1))
+        self.printDataShapes()
+
+        # spliting the training set into the inner-train and the inner-test set (validation set)
+        X_inner_train, X_inner_test, y_inner_train, y_inner_test = train_test_split(self.X_train, self.y_train,
+                                                                                    test_size=val_rate,
+                                                                                    random_state=self.seed,
+                                                                                    stratify=self.y_train)
+
+        # insert input shape into dimension list
+        dims.insert(0, (onesideDim, onesideDim, 1))
+
+        # create cae model
+        self.cae, self.encoder = DNN_models.conv_autoencoder(dims, act=act, output_act=output_act, rf_rate=rf_rate, st_rate=st_rate)
+        self.cae.summary()
+
+        # compile
+        customised_adam = Adam(clipnorm=self.clipnorm_lim)
+        self.cae.compile(optimizer=customised_adam, loss=loss)
+
+        # fit
+        self.history = self.cae.fit(X_inner_train, X_inner_train, epochs=epochs, batch_size=batch_size, callbacks=callbacks, verbose=verbose, validation_data=(X_inner_test, X_inner_test, None))
+
+        # save loss progress
+        self.saveLossProgress()
+
+        if save_model:
+            # load best model
+            self.cae.load_weights(model_out_file)
+            latent_layer_idx = int((len(self.cae.layers) - 1) / 2)
+            self.encoder = Model(self.cae.layers[0].input, self.cae.layers[latent_layer_idx].output)
+
+            # applying the learned encoder into the whole training and the test set.
+            self.X_train = self.encoder.predict(self.X_train)
+            self.X_test = self.encoder.predict(self.X_test)
+            self.printDataShapes()
 
     def printDataShapes(self, train_only=False):
         print("X_train.shape: ", self.X_train.shape)
@@ -434,10 +726,10 @@ class Modality(object):
 
 # A function that trains the AE only, but not the classifier itself.
 # Currently this is invoked by BOHB for parameter optimisation.
-def train_modality(data_table='../preprocessed/16S.tsv', gradient_threshold=100, latent_dims=8, max_training_duration=np.inf, seed=42, classifiers_to_train=[]):
+def train_modality(data_table='../preprocessed/16S.tsv', AE_type='CAE', gradient_threshold=100, latent_dims=8, max_training_duration=np.inf, seed=42, classifiers_to_train=[]):
     # create an object and load data
     # Each different experimental component needs to be treated as 1 separate Modality.
-    m = Modality(data=data_table, dims=latent_dims, seed=seed, clipnorm_lim=gradient_threshold)
+    m = Modality(data=data_table, dims=latent_dims, seed=seed, clipnorm_lim=gradient_threshold,  max_training_duration=max_training_duration)
 
     # load data into the object
     m.load_data(dtype='int64')
@@ -446,7 +738,19 @@ def train_modality(data_table='../preprocessed/16S.tsv', gradient_threshold=100,
     m.t_start = time.time()
 
     # Representation learning (Dimensionality reduction)
-    m.ae(dims=[latent_dims], loss='mse', max_training_duration=max_training_duration, verbose=0)
+    AE_type = AE_type.upper()
+    if AE_type in ['AE', 'SAE', 'DAE']:
+        m.ae(dims=[latent_dims], loss='mse', verbose=0)
+    elif AE_type == 'CAE':
+        m.cae(dims=[latent_dims], loss='mse', verbose=0)
+    elif AE_type == 'VAE':
+        m.vae(dims=[latent_dims], loss='mse', verbose=0)
+    elif AE_type == 'GRP':
+        m.grp()
+    elif AE_type == 'PCA':
+        m.pca()
+    else:
+        raise NameError('Autoencoder type %s is not available' % AE_type)
 
     # OPTIONAL CLASSIFIER for 1 modality only
     if len(classifiers_to_train) > 0:
