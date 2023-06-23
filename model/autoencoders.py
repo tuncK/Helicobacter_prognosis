@@ -41,7 +41,6 @@ from keras.optimizers import Adam
 # importing util libraries
 import os
 import time
-import math
 
 # importing custom library
 import DNN_models
@@ -326,7 +325,6 @@ class Modality(object):
             self.X_train = self.encoder.predict(self.X_train)
             self.X_test = self.encoder.predict(self.X_test)
 
-
     def vae(self, dims=[10], epochs=10000, batch_size=100, verbose=2, loss='mse', output_act=False, act='relu', patience=25, beta=1.0, warmup=True, warmup_rate=0.01, val_rate=0.2, save_model=False):
         """
         Train the variational autoencoder (VAE)
@@ -368,7 +366,7 @@ class Modality(object):
             pruned away and might improve learning performance.
 
         warmup_rate : float
-            
+
         beta : float
 
         save_model : bool
@@ -450,24 +448,28 @@ class Modality(object):
             _, _, self.X_test = self.encoder.predict(self.X_test)
 
     # Convolutional Autoencoder
-    def cae(self, dims=[32], epochs=10000, batch_size=100, verbose=2, loss='mse', output_act=False, act='relu', patience=25, val_rate=0.2, rf_rate=0.1, st_rate=0.25, save_model=False):
+    def cae(self, num_internal_layers=1, use_2D=False, epochs=10000, batch_size=100, verbose=2, loss='mse',
+            output_act=False, act='relu', patience=25, val_rate=0.2, rf_rate=0.1, st_rate=0.25, save_model=False):
         """
         Train the convolutional autoencoder (CAE)
 
         Parameters
         ----------
-        dims : int or ndarray of shape (`n_layers`)
-            Number of dimensions to include in the latent layer (and other intermediate layers)
+        num_internal_layers : int
+            Number of dimensions to include in the intermediate layer (i.e. other than the
+            input and latent layers themselves). Defaults to 1.
+
+        use_2D : bool
+            By default, 1D kernels will be used to search for patterns in the input feature
+            vectors (i.e. False). Enabling will convert these feature vectors into square
+            matrices with 0-padding as needed and train 2D kernels, instead.
 
         epochs : int
             Maximum number of epochs to train the AE. Defaults to 10000. The early stopping
             might make it stop earlier than specified here.
 
         verbose : int
-            Verbosity level
-            0 -
-            1 -
-            2 -
+            Verbosity level: 0 (the most quiet), 1 (intermediate) or 2 (the most detailed).
 
         loss : str
             Parameter to watch the loss by, dafaults to mean_squared_error ('mse').
@@ -489,8 +491,8 @@ class Modality(object):
             Receptive Field (RF) size experessed as a fraction of the input layer dimension.
             0.1 by default.
 
-        st_rate : float in [0,1]
-            Stride size experessed as a fraction of the input layer dimension. 0.25 by default.
+        st_rate : float
+            Stride size experessed as a fraction of receptive field size. 0.25 by default.
 
         save_model : bool
             Whether to save the model parameters during training, false by default. Enabling during
@@ -504,7 +506,7 @@ class Modality(object):
             self.prefix += 'b'
         if output_act:
             self.prefix += 'T'
-        self.prefix += str(dims).replace(", ", "-") + '_'
+        self.prefix += str(num_internal_layers).replace(", ", "-") + '_'
         if act == 'sigmoid':
             self.prefix += 'sig_'
 
@@ -524,33 +526,35 @@ class Modality(object):
             if os.path.isfile(model_out_file):
                 os.remove(model_out_file)
 
-        # fill out blank
-        onesideDim = int(math.sqrt(self.X_train.shape[1])) + 1
-        enlargedDim = onesideDim ** 2
-        self.X_train = np.column_stack((self.X_train, np.zeros((self.X_train.shape[0], enlargedDim - self.X_train.shape[1]))))
-        self.X_test = np.column_stack((self.X_test, np.zeros((self.X_test.shape[0], enlargedDim - self.X_test.shape[1]))))
+        # create cae model
+        if use_2D:
+            # Cast the 1D feature vectors into a 2D square matrix
+            # Pad with 0s as needed
+            def vec2square(x):
+                dim = int(np.sqrt(x.shape[1])) + 1
+                padding_len = dim ** 2 - x.shape[1]
+                padded = np.pad(x, ((0, 0), (0, padding_len)), 'constant', constant_values=0)
+                return padded.reshape((x.shape[0], dim, dim))
 
-        # reshape
-        self.X_train = np.reshape(self.X_train, (len(self.X_train), onesideDim, onesideDim, 1))
-        self.X_test = np.reshape(self.X_test, (len(self.X_test), onesideDim, onesideDim, 1))
-        self.printDataShapes()
+            self.X_train = vec2square(self.X_train)
+            self.X_test = vec2square(self.X_test)
+
+            self.cae, self.encoder = DNN_models.conv_2D_autoencoder(input_len=self.X_train.shape[1], num_internal_layers=1, act=act, output_act=output_act, rf_rate=rf_rate, st_rate=st_rate)
+        else:
+            # If using a 1D CAE, no such conversion is needed. Data enters as a vector as is.
+            self.cae, self.encoder = DNN_models.conv_1D_autoencoder(input_len=self.X_train.shape[1], num_internal_layers=1, act=act, output_act=output_act, rf_rate=rf_rate, st_rate=st_rate)
+
+        self.cae.summary()
+
+        # compile
+        customised_adam = Adam(clipnorm=self.clipnorm_lim)
+        self.cae.compile(optimizer=customised_adam, loss=loss)
 
         # spliting the training set into the inner-train and the inner-test set (validation set)
         X_inner_train, X_inner_test, y_inner_train, y_inner_test = train_test_split(self.X_train, self.y_train,
                                                                                     test_size=val_rate,
                                                                                     random_state=self.seed,
                                                                                     stratify=self.y_train)
-
-        # insert input shape into dimension list
-        dims.insert(0, (onesideDim, onesideDim, 1))
-
-        # create cae model
-        self.cae, self.encoder = DNN_models.conv_autoencoder(dims, act=act, output_act=output_act, rf_rate=rf_rate, st_rate=st_rate)
-        self.cae.summary()
-
-        # compile
-        customised_adam = Adam(clipnorm=self.clipnorm_lim)
-        self.cae.compile(optimizer=customised_adam, loss=loss)
 
         # fit
         self.history = self.cae.fit(X_inner_train, X_inner_train, epochs=epochs, batch_size=batch_size, callbacks=callbacks, verbose=verbose, validation_data=(X_inner_test, X_inner_test, None))
@@ -729,7 +733,7 @@ class Modality(object):
 def train_modality(data_table='../preprocessed/16S.tsv', AE_type='CAE', gradient_threshold=100, latent_dims=8, max_training_duration=np.inf, seed=42, classifiers_to_train=[]):
     # create an object and load data
     # Each different experimental component needs to be treated as 1 separate Modality.
-    m = Modality(data=data_table, dims=latent_dims, seed=seed, clipnorm_lim=gradient_threshold,  max_training_duration=max_training_duration)
+    m = Modality(data=data_table, dims=latent_dims, seed=seed, clipnorm_lim=gradient_threshold, max_training_duration=max_training_duration)
 
     # load data into the object
     m.load_data(dtype='int64')
@@ -742,7 +746,7 @@ def train_modality(data_table='../preprocessed/16S.tsv', AE_type='CAE', gradient
     if AE_type in ['AE', 'SAE', 'DAE']:
         m.ae(dims=[latent_dims], loss='mse', verbose=0)
     elif AE_type == 'CAE':
-        m.cae(dims=[latent_dims], loss='mse', verbose=0)
+        m.cae(num_internal_layers=latent_dims, loss='mse', verbose=0)
     elif AE_type == 'VAE':
         m.vae(dims=[latent_dims], loss='mse', verbose=0)
     elif AE_type == 'GRP':

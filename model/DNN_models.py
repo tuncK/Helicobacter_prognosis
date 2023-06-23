@@ -1,7 +1,9 @@
 # Inhedrited from Deepmicro, defines classes for auto-encoders
 
 from keras.models import Sequential, Model
-from keras.layers import Dense, Dropout, Input, Lambda, Conv2D, Conv2DTranspose, Reshape, Cropping2D, Flatten
+from keras.layers import Dense, Dropout, Input, Lambda, Reshape, Flatten
+from keras.layers import Conv1D, Conv1DTranspose, MaxPool1D, Cropping1D, UpSampling1D
+from keras.layers import Conv2D, Conv2DTranspose, MaxPool2D, Cropping2D, UpSampling2D
 from keras import backend as K
 from keras.losses import mse, binary_crossentropy
 
@@ -33,10 +35,9 @@ def mlp_model(input_dim, numHiddenLayers=3, numUnits=64, dropout_rate=0.5):
     return model
 
 
-# Autoencoder
 def autoencoder(dims, act='relu', init='glorot_uniform', latent_act=False, output_act=False):
     """
-    Fully connected auto-encoder model, symmetric.
+    Fully connected auto-encoder model, symmetric. SAE or DAE.
 
     Parameters
     ----------
@@ -90,90 +91,225 @@ def autoencoder(dims, act='relu', init='glorot_uniform', latent_act=False, outpu
     return Model(inputs=x, outputs=y, name='AE'), Model(inputs=x, outputs=h, name='encoder')
 
 
-def conv_autoencoder(dims, act='relu', init='glorot_uniform', latent_act=False, output_act=False, rf_rate=0.1, st_rate=0.25):
-    # whether to put an activation function in the latent layer
-    if latent_act:
-        l_act = act
-    else:
-        l_act = None
+def conv_1D_autoencoder(input_len, num_internal_layers, num_filters=3, use_max_pooling=False,
+                        init='glorot_uniform', act='relu', output_act=False, rf_rate=0.1, st_rate=0.25):
+    """
+    Train the convolutional autoencoder (CAE) with 1D kernels
 
+    Parameters
+    ----------
+    input_len : int
+        The length of the feature vector. Required.
+
+    num_internal_layers : int
+        Number of dimensions to include in the intermediate layer (i.e. other than the
+        input and latent layers themselves). Defaults to 1.
+
+    num_filters : int >= 1
+        Number of filters to use in each convolution layer, 3 by default.
+
+    use_max_pooling : bool
+        Whether to have max-pooling layers between internal convolution layers. By default,
+        this is set to False and the only dimensionality reduction is tuned by st_rate.
+
+    init : str
+        Initialisation function. 'glorot_uniform' by default.
+
+    act : str
+        Activaton function to use. 'relu' by default.
+
+    output_act : bool
+        Whether to use activation function for the output layer. False by default.
+
+    rf_rate : float in [0,1]
+        Receptive Field (RF) size experessed as a fraction of the input layer dimension.
+        0.1 by default.
+
+    st_rate : float
+        Stride size experessed as a fraction of receptive field size. 0.25 by default.
+    """
+
+    # whether to put an activation function in the output layer
     if output_act:
         o_act = 'sigmoid'
     else:
         o_act = None
 
-    # Determine receptive field size and stride size
-    rf_size = init_rf_size = int(dims[0][0] * rf_rate) # Not >=1 ? Here and below. TK
-    stride_size = init_stride_size = max(int(rf_size * st_rate), 1)
-    print("receptive field (kernel) size: %d" % rf_size)
-    print("stride size: %d" % stride_size)
-
     # The number of internal layers: layers between the input and latent layers
-    n_internal_layers = len(dims) - 1
-
-    if n_internal_layers < 1:
-        raise Exception("The number of internal layers for CAE should be >=1 (%d was provided)" % n_internal_layers)
+    if num_internal_layers < 1:
+        raise ValueError("The number of internal layers for CAE should be >=1 (%d was provided)" % num_internal_layers)
 
     # input layer
-    x = Input(shape=dims[0], name='input')
+    x = Input(shape=(input_len, 1), name='input')
     h = x
 
+    # Keep track of the receptive field size (i.e kernel size) and stride size
     rf_size_list = []
     stride_size_list = []
 
     # internal layers of the encoder
-    for i in range(n_internal_layers):
-        print("rf_size: %d, st_size: %d" % (rf_size, stride_size))
-        h = Conv2D(dims[i + 1], (rf_size, rf_size), strides=(stride_size, stride_size), activation=act, padding='same', kernel_initializer=init, name='encoder_conv_%d' % i)(h)
-        # h = MaxPool2D((2,2), padding='same')(h)
-
-        rf_size = int(K.int_shape(h)[1] * rf_rate)
+    for i in range(num_internal_layers):
+        rf_size = max(1, int(K.int_shape(h)[1] * rf_rate))
         rf_size_list.append(rf_size)
 
-        stride_size = max(int(rf_size / 2.0), 1)
+        stride_size = max(1, int(rf_size * st_rate))
         stride_size_list.append(stride_size)
+        print("rf_size: %d, st_size: %d" % (rf_size, stride_size))
+
+        h = Conv1D(filters=num_filters, kernel_size=rf_size, strides=stride_size, activation=act, padding='same', kernel_initializer=init, name='encoder_conv_%d' % i)(h)
+        if use_max_pooling:
+            h = MaxPool1D(pool_size=2, padding='same')(h)
+
+    final_shape = K.int_shape(h)[1:]
+
+    # bottleneck layer, features are extracted from here
+    h = Flatten(name='flatten')(h)
+    y = h
+    y = Reshape(final_shape)(y)
+
+    # internal layers of the decoder
+    for i in range(num_internal_layers-1, -1, -1):
+        if use_max_pooling:
+            y = UpSampling1D(2)(y)
+
+        if i == 0:
+            # Output layer, some params might be set differently
+            y = Conv1DTranspose(filters=1, kernel_size=rf_size_list[0], strides=stride_size_list[0], activation=o_act, padding='same', kernel_initializer=init, name='decoder_conv_0')(y)
+        else:
+            # Internal layer
+            y = Conv1DTranspose(filters=num_filters, kernel_size=rf_size_list[i], strides=stride_size_list[i], activation=act, padding='same', kernel_initializer=init, name='decoder_conv_%d' % i)(y)
+
+    # Output cropping
+    # If the stride_size is not a divisor of the input length, there might be extra dimensions
+    cropping_size = K.int_shape(y)[1] - K.int_shape(x)[1]
+    if cropping_size > 0:
+        y = Cropping1D(cropping=(0, cropping_size), name='crop')(y)
+
+    return Model(inputs=x, outputs=y, name='CAE'), Model(inputs=x, outputs=h, name='encoder')
+
+
+def conv_2D_autoencoder(input_len, num_internal_layers, num_filters=3, use_max_pooling=False,
+                        init='glorot_uniform', act='relu', output_act=False, rf_rate=0.1, st_rate=0.25):
+    """
+    Train the convolutional autoencoder (CAE) with 2D kernels
+
+    The feature vector is pre-converted into a square matrix before feeding and this
+    model scans it as if it is an "image"
+
+    Parameters
+    ----------
+    input_len : int
+        The dimension of the square feature matrix. Required.
+
+    num_internal_layers : int
+        Number of dimensions to include in the intermediate layer (i.e. other than the
+        input and latent layers themselves). Defaults to 1.
+
+    num_filters : int >= 1
+        Number of filters to use in each convolution layer, 3 by default.
+
+    use_max_pooling : bool
+        Whether to have max-pooling layers between internal convolution layers. By default,
+        this is set to False and the only dimensionality reduction is tuned by st_rate.
+
+    init : str
+        Initialisation function. 'glorot_uniform' by default.
+
+    act : str
+        Activaton function to use. 'relu' by default.
+
+    output_act : bool
+        Whether to use activation function for the output layer. False by default.
+
+    rf_rate : float in [0,1]
+        Receptive Field (RF) size experessed as a fraction of the input layer dimension.
+        0.1 by default.
+
+    st_rate : float
+        Stride size experessed as a fraction of receptive field size. 0.25 by default.
+    """
+
+    # whether to apply activation function in the output layer
+    if output_act:
+        o_act = 'sigmoid'
+    else:
+        o_act = None
+
+    # The number of internal layers: layers between the input and latent layers
+    if num_internal_layers < 1:
+        raise ValueError("The number of internal layers for CAE should be >=1 (%d was provided)" % num_internal_layers)
+
+    # input layer
+    x = Input(shape=(input_len, input_len, 1), name='input')
+    h = x
+
+    # Keep track of the receptive field size (i.e kernel size) and stride size
+    rf_size_list = []
+    stride_size_list = []
+
+    # internal layers in encoder
+    for i in range(num_internal_layers):
+        rf_size = max(1, int(K.int_shape(h)[1] * rf_rate))
+        rf_size_list.append(rf_size)
+
+        stride_size = max(1, int(rf_size * st_rate))
+        stride_size_list.append(stride_size)
+        print("rf_size: %d, st_size: %d" % (rf_size, stride_size))
+
+        h = Conv2D(filters=num_filters, kernel_size=rf_size, strides=stride_size, activation=act, padding='same', kernel_initializer=init, name='encoder_conv_%d' % i)(h)
+        if use_max_pooling:
+            h = MaxPool2D(pool_size=(2, 2), padding='same')(h)
 
     reshapeDim = K.int_shape(h)[1:]
 
-    # bottleneck layer, features are extracted from h
-    # TK The original Deepmicro does not respect l_act=False, but instead only has:
+    # bottle neck layer, features are extracted from here
     h = Flatten()(h)
-    # h = Conv2D(dims[-1], (rf_size, rf_size), strides=(stride_size, stride_size), activation=l_act, padding='same', kernel_initializer=init, name='encoder_conv_%d' % len(dims))(h)
     y = h
     y = Reshape(reshapeDim)(y)
 
-    print(rf_size_list)
-    print(stride_size_list)
-
     # internal layers of the decoder
-    # Before l_act correction, loop was over range(n_internal_layers-1, 0, -1) TK
-    for i in range(n_internal_layers-1, 0, -1):
-        y = Conv2DTranspose(dims[i], (rf_size_list[i-1], rf_size_list[i-1]), strides=(stride_size_list[i-1], stride_size_list[i-1]), activation=act, padding='same', kernel_initializer=init, name='decoder_conv_%d' % i)(y)
-        # y = UpSampling2D((2,2))(y)
+    for i in range(num_internal_layers-1, -1, -1):
+        if use_max_pooling:
+            y = UpSampling2D((2, 2))(y)
 
-    y = Conv2DTranspose(1, (init_rf_size, init_rf_size), strides=(init_stride_size, init_stride_size), activation=o_act, padding='same', kernel_initializer=init, name='decoder_conv_0')(y)
+        if i == 0:
+            # Output layer, some params might be set differently
+            y = Conv2DTranspose(filters=1, kernel_size=rf_size_list[i], strides=stride_size_list[i], activation=o_act, padding='same', kernel_initializer=init, name='decoder_conv_0')(y)
+        else:
+            # Internal layer
+            y = Conv2DTranspose(filters=num_filters, kernel_size=rf_size_list[i], strides=stride_size_list[i], activation=act, padding='same', kernel_initializer=init, name='decoder_conv_%d' % i)(y)
 
-    # output cropping
-    if K.int_shape(x)[1] != K.int_shape(y)[1]:
-        cropping_size = K.int_shape(y)[1] - K.int_shape(x)[1]
-        y = Cropping2D(cropping=((cropping_size, 0), (cropping_size, 0)), data_format=None)(y)
-
-    # print("dims[0]: %s" % str(dims[0]))
-
-    # output
-    # y = Conv2D(1, (rf_size, rf_size), activation=o_act, kernel_initializer=init, padding='same', name='decoder_1')(y)
-    #
-    # outputDim = reshapeDim * (2 ** n_internal_layers)
-    # if outputDim != dims[0][0]:
-    #     cropping_size = outputDim - dims[0][0]
-    #     #print(outputDim, dims[0][0], cropping_size)
-    #     y = Cropping2D(cropping=((cropping_size, 0), (cropping_size, 0)), data_format=None)(y)
+    # Output cropping
+    # If the stride_size is not a divisor of the input length, there might be extra dimensions
+    cropping_size = K.int_shape(y)[1] - K.int_shape(x)[1]
+    if cropping_size > 0:
+        y = Cropping2D(cropping=((0, cropping_size), (0, cropping_size)), name='crop')(y)
 
     return Model(inputs=x, outputs=y, name='CAE'), Model(inputs=x, outputs=h, name='encoder')
 
 
 # Variational Autoencoder
 def variational_AE(dims, act='relu', init='glorot_uniform', output_act=False, recon_loss='mse', beta=1):
+    """
+    Train the variational autoencoder (VAE)
+
+    Parameters
+    ----------
+    dims : int or ndarray of shape (`n_layers`)
+        Number of dimensions to include in the latent layer (and other intermediate layers)
+
+    act : str
+        Actovation function to use. 'relu' by default.
+
+    output_act : bool
+        Whether to use an activation function for the output layer. False by default.
+
+    recon_loss : str
+        Method to evaluate reconstruction loss by the VAE. 'mse' by default.
+
+    beta : float
+        Weight for the Kullback-Leibler divergence. Defaults to 1.
+    """
 
     if output_act:
         o_act = 'sigmoid'
@@ -195,7 +331,8 @@ def variational_AE(dims, act='relu', init='glorot_uniform', output_act=False, re
     z_mean = Dense(dims[-1], name='z_mean')(h)
     z_sigma = Dense(dims[-1], name='z_sigma')(h)
 
-    # use reparameterization trick to push the sampling out as input
+    # Use reparameterization trick to push the sampling out as input
+    # See https://www.tensorflow.org/tutorials/generative/cvae
     # note that "output_shape" isn't necessary with the TensorFlow backend
     # instead of sampling from Q(z|X), sample epsilon = N(0,I)
     # z = z_mean + sqrt(var) * epsilon
