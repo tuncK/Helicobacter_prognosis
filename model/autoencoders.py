@@ -76,10 +76,11 @@ class Modality(object):
         Seed for the number random generator. Defaults to 0.
     """
 
-    def __init__(self, data, dims, clipnorm_lim=1, seed=0, max_training_duration=np.inf):
+    def __init__(self, Xfile, Yfile, dims, clipnorm_lim=1, seed=0, max_training_duration=np.inf):
         self.t_start = time.time()
-        self.filename = str(data)
-        self.data = self.filename.split('/')[-1].split('.')[0]
+        self.Xfilename = str(Xfile)
+        self.Yfilename = str(Yfile)
+        self.data = self.Xfilename.split('/')[-1].split('_')[0].split('.')[0]
         self.seed = seed
         self.dims = dims
         self.max_training_duration = max_training_duration
@@ -95,16 +96,16 @@ class Modality(object):
         if not os.path.isdir(self.output_dir):
             os.mkdir(self.output_dir)
 
-    def load_data(self, dtype=None):
+    def load_X_data(self, dtype=None):
         """
             Read training data (X) from file
         """
 
         # read file
-        if os.path.isfile(self.filename):
-            raw = pd.read_csv(self.filename, sep='\t', index_col=0, header=0)
+        if os.path.isfile(self.Xfilename):
+            raw = pd.read_csv(self.Xfilename, sep='\t', index_col=0, header=0)
         else:
-            raise FileNotFoundError("File {} does not exist".format(self.filename))
+            raise FileNotFoundError("File {} does not exist".format(self.Xfilename))
 
         # Keep the patient ids etc. to be able to match to labels later on.
         # We will remove pandas auto-added suffixes on duplicates
@@ -121,20 +122,20 @@ class Modality(object):
 
         self.printDataShapes(train_only=True)
 
-    def load_labels(self, filename, dtype=None):
+    def load_Y_data(self, dtype=None):
         """
         Reads class labels (Y) from file
         """
 
-        if os.path.isfile(filename):
-            imported_labels = pd.read_csv(filename, sep='\t', index_col=0, header=0)
+        if os.path.isfile(self.Yfilename):
+            imported_labels = pd.read_csv(self.Yfilename, sep='\t', index_col=0, header=0)
 
             # There might be duplicate measurements for the same patient.
             # i.e., some patient identifiers might need to be repeated.
             # The order of params also needs to match to the training data X
             labels = imported_labels.loc[self.dataset_ids]
         else:
-            raise FileNotFoundError("{} does not exist".format(filename))
+            raise FileNotFoundError("{} does not exist".format(self.Yfilename))
 
         # Label data validity check
         if not labels.values.shape[1] > 1:
@@ -147,14 +148,33 @@ class Modality(object):
         self.X_train, self.X_test, self.y_train, self.y_test = split_data
         self.printDataShapes()
 
-    def get_transformed_data(self):
+    def export_transformed_data(self, filename=None):
         """
-            Get a dataframe with the latent representation of the training data (X) to file
+            Export a dataframe with the latent representation of the training data (X) to file
+
+            WARNING: Only exports training data, so if training gets split between
+            the end of AE training and invocation of this function, the export
+            will be partial.
+
+            Parameters
+            ----------
+            filename : str
+                Filename for the output file. If none provided, it will suffix the original
+                input file with '_latent'.
         """
 
-        out = pd.DataFrame(self.X_train).transpose()
-        out.columns = self.dataset_ids
-        return out
+        if not filename:
+            # By default, the output filename will be:
+            # a/b.ext -> a/b_latent.ext
+            filename = self.Xfilename().split('.')[0] + '_latent.tsv'
+
+        # Get the matrix with labels
+        transformed_df = pd.DataFrame(self.X_train).transpose()
+        transformed_df.columns = self.dataset_ids
+
+        # writeout
+        transformed_df.to_csv(filename, sep='\t', header=True, index=True)
+        print("The learned representation of the training set has been saved in '{}'".format(filename))
 
     # Principal Component Analysis
     def pca(self, ratio_threshold=0.99, save_model=False):
@@ -312,10 +332,10 @@ class Modality(object):
         self.history = self.autoencoder.fit(X_inner_train, X_inner_train, epochs=epochs, batch_size=batch_size, callbacks=callbacks,
                                             verbose=verbose, validation_data=(X_inner_test, X_inner_test))
 
-        # save loss progress
-        self.saveLossProgress()
-
         if save_model:
+            # Plot the loss curves and save.
+            self.saveLossProgress()
+
             # load best model
             self.autoencoder = load_model(model_out_file)
             layer_idx = int((len(self.autoencoder.layers) - 1) / 2)
@@ -706,9 +726,6 @@ class Modality(object):
         # Perform CV against the AE-compressed data
         clf.fit(self.X_train, self.y_train)
 
-        print("Best parameter set found on the development set:")
-        print(clf.best_params_)
-
         # Evaluate performance of the best model on the test set
         y_pred = clf.predict(self.X_test)
         y_prob = clf.predict_proba(self.X_test)[:, 1]
@@ -728,15 +745,53 @@ class Modality(object):
         return metrics
 
 
-# A function that trains the AE only, but not the classifier itself.
-# Currently this is invoked by BOHB for parameter optimisation.
-def train_modality(data_table='../preprocessed/16S.tsv', AE_type='CAE', gradient_threshold=100, latent_dims=8, max_training_duration=np.inf, seed=42, classifiers_to_train=[]):
+def train_modality(Xfile, Yfile, AE_type, gradient_threshold=100, latent_dims=8, max_training_duration=np.inf, seed=42, classifiers_to_train=[]):
+    """
+    A function that trains the AE only, but not the classifier itself.
+
+    Currently this is invoked by BOHB for parameter optimisation.
+
+    Parameters
+    ----------
+    Xfile : str
+        Name of the file containing features matrix (i.e. X). First row and column
+        will be treated as labels and ignored. REQUIRED
+
+    Yfile : str
+        Name of the file containing the class labels. Should be a 2-column tsv.
+        1st column should contain the sample identifiers, and should match those in
+        Xfile. 2nd column should contain binary class of each sample. REQUIRED
+
+    AE_type : 'AE', 'CAE', 'VAE', 'GRP' or 'PCA' as str
+        The type of dimensionality reduction method to be used. REQUIRED
+
+    gradient_threshold : float
+        Maximum gradient magnitude to be allowed during training. Smaller values
+        reduce the likelihood of gradient explosion, however might considerably
+        increase the training time. Not used by default.
+
+    latent_dims : int
+        Number of dimensions of the latent space. 8 by default and only used by
+        AE and VAE.
+
+    max_training_duration : float
+        Maximum duration to allow during the AE training, in seconds. If none
+        provided, there is no time limit.
+
+    seed : int
+        Seed for the random number generator. Defaults to 42.
+
+    classifiers_to_train : list of str
+        Optional list of names of the binary classifiers to train. None will be
+        trained by default.
+    """
+
     # create an object and load data
     # Each different experimental component needs to be treated as 1 separate Modality.
-    m = Modality(data=data_table, dims=latent_dims, seed=seed, clipnorm_lim=gradient_threshold, max_training_duration=max_training_duration)
+    m = Modality(Xfile=Xfile, Yfile=Yfile, dims=latent_dims, seed=seed, clipnorm_lim=gradient_threshold, max_training_duration=max_training_duration)
 
     # load data into the object
-    m.load_data(dtype='int64')
+    m.load_X_data()
 
     # time check after data has been loaded
     m.t_start = time.time()
@@ -763,7 +818,7 @@ def train_modality(data_table='../preprocessed/16S.tsv', AE_type='CAE', gradient
         scoring = 'roc_auc'  # options: 'roc_auc', 'accuracy', 'f1', 'recall', 'precision'
 
         # Training classification model(s)
-        m.load_labels(filename='../preprocessed/class-labels.tsv', dtype='int64')
+        m.load_Y_data(filename=Yfile, dtype='int64')
 
         # Support vector classifier
         if 'svm' in classifiers_to_train:
@@ -786,4 +841,4 @@ def train_modality(data_table='../preprocessed/16S.tsv', AE_type='CAE', gradient
 
 
 if __name__ == '__main__':
-    train_modality()
+    train_modality(Xfile='../dm_data/IBD_X_abundance.tsv', Yfile='../dm_data/IBD_Y.tsv', AE_type='SAE')

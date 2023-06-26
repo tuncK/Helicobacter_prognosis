@@ -11,18 +11,9 @@ import pandas as pd
 # Features should be on the rows, 1st column with feature label
 # Samples should be on the columns, each column should have a common sample name
 data_tables = [
-                    '../preprocessed/16S.tsv',
-                    # '../preprocessed/ELISA.tsv',
-                    # '../preprocessed/host_transcriptome.tsv',
-                    # '../preprocessed/metabolomics.tsv',
-                    # '../preprocessed/mgx_enzymes.tsv',
-                    # '../preprocessed/mgx_pathways.tsv',
-                    '../preprocessed/mgx_species.tsv',
-                    # '../preprocessed/mtx_enzymes.tsv',
-                    # '../preprocessed/mtx_pathways.tsv',
-                    # '../preprocessed/proteome.tsv',
-                    # '../preprocessed/virome.tsv'
-                  ]
+                    '../dm_data/IBD_X_abundance.tsv',
+                    '../dm_data/IBD_X_marker.tsv'
+              ]
 
 
 # Train an AE for each modality separately.
@@ -38,11 +29,11 @@ for data_table in data_tables:
     (grad_threshold, dim, seed, AE_type) = MyWorker.extract_convert_params(best_conf)
     dims.append(dim)
 
-    m = autoencoders.Modality(data=data_table, dims=dim, seed=seed, clipnorm_lim=grad_threshold)
+    m = autoencoders.Modality(Xfile=data_table, Yfile=None, dims=dim, seed=seed, clipnorm_lim=grad_threshold)
 
     # load data into the object
-    m.load_data(dtype='int64')
-    
+    m.load_X_data()
+
     # Decide on which AE worked the best and use.
     if AE_type in ['AE', 'SAE', 'DAE']:
         ae_func = m.ae
@@ -55,15 +46,11 @@ for data_table in data_tables:
 
     # Representation learning, no time limit
     ae_func(dims=[dim], loss='mse', verbose=1, save_model=True)
-    latent_rep = m.get_transformed_data()
 
-    # Retrieved AE-compressed feature set and keep in a big matrix.
-    # write the learned representation of the training set as a file
-    rep_file = "../results/" + m.prefix + m.data + "_rep.tsv"
-    latent_rep.to_csv(rep_file, sep='\t', header=True, index=True)
-    X_latent_files.append(rep_file)
-    print("The learned representation of the training set has been saved in '{}'".format(rep_file))
-
+    # Write the learned representation of the training set as a file
+    filename = '/'.join(data_table.split('.')[0].split('/')[0:-1]) + '_X_latent.tsv'
+    m.export_transformed_data(filename)
+    X_latent_files.append(filename)
 
 print('Combining AE of each modality...')
 latent_dfs = []
@@ -82,9 +69,9 @@ df_combined.to_csv('../results/all_latent.tsv', sep='\t', header=True, index=Tru
 
 # Generate a fake modality containing all datasets
 # We use this for classification only, no AE
-m = autoencoders.Modality(data='../results/all_latent.tsv', dims=dims)
-m.load_data(dtype='int64')
-m.load_labels(filename='../preprocessed/class-labels.tsv', dtype='int64')
+m = autoencoders.Modality(Xfile='../results/all_latent.tsv', Yfile='../dm_data/IBD_Y.tsv', dims=dims)
+m.load_X_data()
+m.load_Y_data(dtype='int64')
 
 print('Starting classification with MKL...')
 numFolds = 5

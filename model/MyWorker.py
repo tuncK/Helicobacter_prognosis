@@ -26,7 +26,8 @@ def extract_convert_params(config_dict):
     grad_threshold = 10**config_dict['log10_grad_thres']
     dim = 2**config_dict['log2_latent_dim']
     seed = config_dict['seed']
-    return (grad_threshold, dim, seed)
+    AE_type = config_dict['AE_type']
+    return (grad_threshold, dim, seed, AE_type)
 
 
 class MyWorker(Worker):
@@ -67,9 +68,10 @@ class MyWorker(Worker):
                 'info' (dict)
         """
 
-        (grad_threshold, dim, seed) = extract_convert_params(config)
-        val_loss = autoencoders.train_modality(data_table=self.data_table, gradient_threshold=grad_threshold,
-                                               latent_dims=dim, max_training_duration=budget, seed=seed)
+        (grad_threshold, dim, seed, AE_type) = extract_convert_params(config)
+        val_loss = autoencoders.train_modality(Xfile=self.data_table, Yfile=None, gradient_threshold=grad_threshold,
+                                               latent_dims=dim, max_training_duration=budget, seed=seed,
+                                               AE_type=AE_type)
         return ({
                  'loss': float(val_loss),  # this is the a mandatory field to run hyperband
                  'info': val_loss  # can be used for any user-defined information - also mandatory
@@ -81,4 +83,5 @@ class MyWorker(Worker):
         config_space.add_hyperparameter(CS.UniformIntegerHyperparameter('log10_grad_thres', lower=-6, upper=1))
         config_space.add_hyperparameter(CS.UniformIntegerHyperparameter('log2_latent_dim', lower=2, upper=10))
         config_space.add_hyperparameter(CS.UniformIntegerHyperparameter('seed', lower=1, upper=10))
+        config_space.add_hyperparameter(CS.Categorical('AE_type', ['AE']))
         return (config_space)
