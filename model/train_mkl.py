@@ -6,6 +6,7 @@ import startBOHB
 import MyWorker
 import autoencoders
 import pandas as pd
+import json
 
 # List of data files to use for training
 # Features should be on the rows, 1st column with feature label
@@ -15,48 +16,52 @@ data_tables = [
                     '../dm_data/IBD_X_marker.tsv'
               ]
 
-
 # Train an AE for each modality separately.
 # Find the best param configuration with BOHB without saving the model
 # Then save the reduced representation of the data with best hyperparams found.
 X_latent_files = []
-dims = []
 for data_table in data_tables:
     print('Representation learning on %s' % data_table)
     best_conf = startBOHB.start_BOHB(min_budget=30, max_budget=100, data_table=data_table, n_workers=6, n_iterations=10)
 
     # This time, we need to save the result (and feed into the classifier later on)
-    (grad_threshold, dim, seed, AE_type) = MyWorker.extract_convert_params(best_conf)
-    dims.append(dim)
-
-    m = autoencoders.Modality(Xfile=data_table, Yfile=None, dims=dim, seed=seed, clipnorm_lim=grad_threshold)
+    best_conf = MyWorker.convert_hyper_params(best_conf)
+    m = autoencoders.Modality(Xfile=data_table, Yfile=None, **best_conf)
 
     # load data into the object
     m.load_X_data()
 
     # Decide on which AE worked the best and use.
-    if AE_type in ['AE', 'SAE', 'DAE']:
+    if best_conf['AE_type'] in ['AE', 'SAE', 'DAE']:
         ae_func = m.ae
-    elif AE_type == 'CAE':
+    elif best_conf['AE_type'] == 'CAE':
         ae_func = m.cae
-    elif AE_type == 'VAE':
+    elif best_conf['AE_type'] == 'VAE':
         ae_func = m.vae
     else:
-        raise NameError('Autoencoder type %s is not available' % AE_type)
+        raise NameError('Autoencoder type %s is not available' % best_conf['AE_type'])
 
     # Representation learning, no time limit
-    ae_func(dims=[dim], loss='mse', verbose=1, save_model=True)
+    print('Started full learning with best AE hyperparams: %s' % best_conf)
+    ae_func(loss='mse', verbose=0, save_model=True, **best_conf)
 
     # Write the learned representation of the training set as a file
-    filename = '/'.join(data_table.split('.')[0].split('/')[0:-1]) + '_X_latent.tsv'
+    filename = '../results/' + data_table.split('/')[-1].split('.')[0] + '_latent.tsv'
     m.export_transformed_data(filename)
     X_latent_files.append(filename)
 
+    # Write the best AE hyperparams to file
+    filename = '../results/' + data_table.split('/')[-1].split('.')[0] + '_AE_params.json'
+    with open(filename, 'w') as file:
+        file.write(json.dumps(best_conf))
+
 print('Combining AE of each modality...')
 latent_dfs = []
+dims = []
 for filename in X_latent_files:
     df = pd.read_csv(filename, sep='\t', header=0, index_col=0)
     latent_dfs.append(df)
+    dims.append(df.shape[0])
 
 print('Writing the combined dataset to file...')
 df_combined = pd.concat(latent_dfs, axis=0, join='inner')
@@ -69,13 +74,15 @@ df_combined.to_csv('../results/all_latent.tsv', sep='\t', header=True, index=Tru
 
 # Generate a fake modality containing all datasets
 # We use this for classification only, no AE
-m = autoencoders.Modality(Xfile='../results/all_latent.tsv', Yfile='../dm_data/IBD_Y.tsv', dims=dims)
+m = autoencoders.Modality(Xfile='../results/all_latent.tsv', Yfile='../dm_data/IBD_Y.tsv')
 m.load_X_data()
 m.load_Y_data(dtype='int64')
 
 print('Starting classification with MKL...')
 numFolds = 5
 scoring = 'roc_auc'  # options: 'roc_auc', 'accuracy', 'f1', 'recall', 'precision'
-m.classification(method='mkl', cv=numFolds, scoring=scoring, cache_size=1000, use_bayes_opt=False)
+classifier_metrics = m.classification(method='mkl', cv=numFolds, scoring=scoring, cache_size=1000, use_bayes_opt=False,
+                                      subpart_dims=dims, verbose=1)
+print(classifier_metrics)
 
 print('All done')

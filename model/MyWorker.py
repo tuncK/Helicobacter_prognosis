@@ -7,27 +7,28 @@ from hpbandster.core.worker import Worker
 import autoencoders
 
 
-def extract_convert_params(config_dict):
+def convert_hyper_params(config_dict):
     """
     A utility function to convert the hyperparams used for the optimisation.
     It is more efficient to log-sample some of the search dims, which needs to be converted.
 
     Args:
-        config_dict: dictionary containing the sampled configurations by the optimizer
+        config_dict : dictionary containing the sampled configurations by the optimizer
 
     Returns:
-        tuple with the following fields:
-            'grad_threshold' (scalar): Threshold on the magnitude of the gradient to
-                allow during training.
-            'dim' (integer): Number of dimensions in the latent layer
-            'seed' (integer): Seed for RNG
+        out_dict : A pre-computed dict in linear scale with the same fields as the input.
         """
 
-    grad_threshold = 10**config_dict['log10_grad_thres']
-    dim = 2**config_dict['log2_latent_dim']
-    seed = config_dict['seed']
-    AE_type = config_dict['AE_type']
-    return (grad_threshold, dim, seed, AE_type)
+    out_dict = {}
+    for (key, val) in config_dict.items():
+        if key.startswith('log2_'):
+            out_dict['_'.join(key.split('_')[1:])] = 2 ** val
+        elif key.startswith('log10_'):
+            out_dict['_'.join(key.split('_')[1:])] = 10 ** val
+        else:
+            out_dict[key] = val
+
+    return out_dict
 
 
 class MyWorker(Worker):
@@ -68,10 +69,8 @@ class MyWorker(Worker):
                 'info' (dict)
         """
 
-        (grad_threshold, dim, seed, AE_type) = extract_convert_params(config)
-        val_loss = autoencoders.train_modality(Xfile=self.data_table, Yfile=None, gradient_threshold=grad_threshold,
-                                               latent_dims=dim, max_training_duration=budget, seed=seed,
-                                               AE_type=AE_type)
+        conf = convert_hyper_params(config)
+        val_loss = autoencoders.train_modality(Xfile=self.data_table, Yfile=None, **conf)
         return ({
                  'loss': float(val_loss),  # this is the a mandatory field to run hyperband
                  'info': val_loss  # can be used for any user-defined information - also mandatory
@@ -79,9 +78,23 @@ class MyWorker(Worker):
 
     @staticmethod
     def get_configspace():
-        config_space = CS.ConfigurationSpace()
-        config_space.add_hyperparameter(CS.UniformIntegerHyperparameter('log10_grad_thres', lower=-6, upper=1))
-        config_space.add_hyperparameter(CS.UniformIntegerHyperparameter('log2_latent_dim', lower=2, upper=10))
-        config_space.add_hyperparameter(CS.UniformIntegerHyperparameter('seed', lower=1, upper=10))
-        config_space.add_hyperparameter(CS.Categorical('AE_type', ['AE']))
-        return (config_space)
+        config = CS.ConfigurationSpace()
+
+        # Common hyperparams
+        AE_type = CS.Categorical('AE_type', ['CAE', 'SAE', 'VAE'])
+        log10_gradient_threshold = CS.UniformIntegerHyperparameter('log10_gradient_threshold', lower=-6, upper=1)
+        seed = CS.UniformIntegerHyperparameter('seed', lower=1, upper=10)
+
+        # CAE-specific hyperparamms
+        num_internal_layers = CS.UniformIntegerHyperparameter('num_internal_layers', lower=1, upper=2)
+        use_2D_kernels = CS.Categorical('use_2D_kernels', [True, False])
+        cond_1 = CS.EqualsCondition(num_internal_layers, AE_type, 'CAE')
+        cond_2 = CS.EqualsCondition(use_2D_kernels, AE_type, 'CAE')
+
+        # SAE/DAE and VAE only
+        log2_latent_dims = CS.UniformIntegerHyperparameter('log2_latent_dims', lower=2, upper=10)
+        cond_3 = CS.NotEqualsCondition(log2_latent_dims, AE_type, 'CAE')
+
+        config.add_hyperparameters([AE_type, log10_gradient_threshold, seed, num_internal_layers, use_2D_kernels, log2_latent_dims])
+        config.add_conditions([cond_1, cond_2, cond_3])
+        return config

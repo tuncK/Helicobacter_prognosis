@@ -60,9 +60,6 @@ class Modality(object):
         Filename containing the entire training dataset
         File should contain an ndarray of shape (`n_features`,`n_samples`)
 
-    dims : int or ndarray of shape (`n_layers`)
-        Number of dimensions to include in the latent layer (and other intermediate layers)
-
     clipnorm_lim : float
         Threshold for gradient normalisation for numerical stability during training.
         If the norm of the gradient exceeds this threshold, it will be scaled down to this value.
@@ -76,20 +73,19 @@ class Modality(object):
         Seed for the number random generator. Defaults to 0.
     """
 
-    def __init__(self, Xfile, Yfile, dims, clipnorm_lim=1, seed=0, max_training_duration=np.inf):
+    def __init__(self, Xfile, Yfile, clipnorm_lim=1, seed=0, max_training_duration=np.inf, **kwargs):
         self.t_start = time.time()
         self.Xfilename = str(Xfile)
         self.Yfilename = str(Yfile)
         self.data = self.Xfilename.split('/')[-1].split('_')[0].split('.')[0]
         self.seed = seed
-        self.dims = dims
         self.max_training_duration = max_training_duration
         self.prefix = ''
         self.representation_only = False
         self.clipnorm_lim = clipnorm_lim
         self.dataset_ids = None
 
-        params = self.data + '_' + str(dims) + '_' + str(self.seed) + '_' + str(clipnorm_lim)
+        params = self.data + '_' + str(self.seed) + '_' + str(clipnorm_lim)
         self.modelName = '%s' % params
 
         self.output_dir = '../results/'
@@ -235,7 +231,8 @@ class Modality(object):
                 self.stopped_epoch = epoch
 
     # Shallow Autoencoder & Deep Autoencoder
-    def ae(self, dims=[50], epochs=10000, batch_size=100, verbose=2, loss='mean_squared_error', latent_act=False, output_act=False, act='relu', patience=20, val_rate=0.2, save_model=False):
+    def ae(self, dims=[50], epochs=10000, batch_size=100, verbose=2, loss='mean_squared_error', latent_act=False,
+           output_act=False, act='relu', patience=20, val_rate=0.2, save_model=False, **kwargs):
 
         """
         Train the shallow (1-layer) or deep (>1 layers) auto-encoder
@@ -345,7 +342,8 @@ class Modality(object):
             self.X_train = self.encoder.predict(self.X_train)
             self.X_test = self.encoder.predict(self.X_test)
 
-    def vae(self, dims=[10], epochs=10000, batch_size=100, verbose=2, loss='mse', output_act=False, act='relu', patience=25, beta=1.0, warmup=True, warmup_rate=0.01, val_rate=0.2, save_model=False):
+    def vae(self, dims=[8], epochs=10000, batch_size=100, verbose=2, loss='mse', output_act=False, act='relu',
+            patience=25, beta=1.0, warmup=True, warmup_rate=0.01, val_rate=0.2, save_model=False, **kwargs):
         """
         Train the variational autoencoder (VAE)
 
@@ -353,6 +351,7 @@ class Modality(object):
         ----------
         dims : int or ndarray of shape (`n_layers`)
             Number of dimensions to include in the latent layer (and other intermediate layers)
+            Defaults to 8.
 
         epochs : int
             Maximum number of epochs to train the AE. Defaults to 10000. The early stopping
@@ -455,10 +454,10 @@ class Modality(object):
         # fit
         self.history = self.vae.fit(X_inner_train, epochs=epochs, batch_size=batch_size, callbacks=callbacks, verbose=verbose, validation_data=(X_inner_test, None))
 
-        # save loss progress
-        self.saveLossProgress()
-
         if save_model:
+            # save loss progress
+            self.saveLossProgress()
+
             # load best model
             self.vae.load_weights(model_out_file)
             self.encoder = self.vae.layers[1]
@@ -468,8 +467,9 @@ class Modality(object):
             _, _, self.X_test = self.encoder.predict(self.X_test)
 
     # Convolutional Autoencoder
-    def cae(self, num_internal_layers=1, use_2D=False, epochs=10000, batch_size=100, verbose=2, loss='mse',
-            output_act=False, act='relu', patience=25, val_rate=0.2, rf_rate=0.1, st_rate=0.25, save_model=False):
+    def cae(self, num_internal_layers=1, num_filters=3, use_2D=False, epochs=10000, batch_size=100, verbose=2,
+            loss='mse', output_act=False, act='relu', patience=25, val_rate=0.2, rf_rate=0.1, st_rate=0.25,
+            save_model=False, **kwargs):
         """
         Train the convolutional autoencoder (CAE)
 
@@ -559,10 +559,12 @@ class Modality(object):
             self.X_train = vec2square(self.X_train)
             self.X_test = vec2square(self.X_test)
 
-            self.cae, self.encoder = DNN_models.conv_2D_autoencoder(input_len=self.X_train.shape[1], num_internal_layers=1, act=act, output_act=output_act, rf_rate=rf_rate, st_rate=st_rate)
+            self.cae, self.encoder = DNN_models.conv_2D_autoencoder(input_len=self.X_train.shape[1], num_internal_layers=num_internal_layers,
+                                                                    act=act, output_act=output_act, rf_rate=rf_rate, st_rate=st_rate)
         else:
             # If using a 1D CAE, no such conversion is needed. Data enters as a vector as is.
-            self.cae, self.encoder = DNN_models.conv_1D_autoencoder(input_len=self.X_train.shape[1], num_internal_layers=1, act=act, output_act=output_act, rf_rate=rf_rate, st_rate=st_rate)
+            self.cae, self.encoder = DNN_models.conv_1D_autoencoder(input_len=self.X_train.shape[1], num_internal_layers=num_internal_layers,
+                                                                    act=act, output_act=output_act, rf_rate=rf_rate, st_rate=st_rate)
 
         self.cae.summary()
 
@@ -579,10 +581,10 @@ class Modality(object):
         # fit
         self.history = self.cae.fit(X_inner_train, X_inner_train, epochs=epochs, batch_size=batch_size, callbacks=callbacks, verbose=verbose, validation_data=(X_inner_test, X_inner_test, None))
 
-        # save loss progress
-        self.saveLossProgress()
-
         if save_model:
+            # save loss progress
+            self.saveLossProgress()
+
             # load best model
             self.cae.load_weights(model_out_file)
             latent_layer_idx = int((len(self.cae.layers) - 1) / 2)
@@ -633,7 +635,7 @@ class Modality(object):
         return min(self.history.history['val_loss'])
 
     # Classification
-    def classification(self, method='svm', cv=5, scoring='roc_auc', n_jobs=-1, cache_size=10000, use_bayes_opt=False):
+    def classification(self, method='svm', cv=5, scoring='roc_auc', n_jobs=-1, cache_size=10000, use_bayes_opt=False, subpart_dims=None, verbose=2):
         """
         Train the classifier.
 
@@ -642,14 +644,24 @@ class Modality(object):
 
         Parameters
         ----------
-        method : str, 'svm', 'rf' or 'mlp'
-            Classifier type to be trained. SVM bvy default.
+        method : str, 'svm', 'rf', 'mlp' or 'mkl'
+            Classifier type to be trained. SVM by default.
 
         cv : int
             Number of folds for the cross-validation. Defaults to 5.
 
         scoring : str
             Objective function to be used to assess training quality. AUC of ROC curve by default.
+
+        n_jobs : int
+            Number of parallel jobs to start, uses all available cores by default (-1).
+
+        use_bayes_opt : bool
+            Whether to use Bayesian optimisation rather than grid search. False by default.
+
+        subpart_dims : int array
+            Iff using MKL, the dimensions of each modality that contributes to the final feature vector.
+            The input feature vectors will be segmented back to constitutents by these dimensions.
         """
 
         clf_start_time = time.time()
@@ -659,12 +671,12 @@ class Modality(object):
         if method == 'svm':
             hyper_parameters = [{'C': [2 ** s for s in range(-5, 6, 2)], 'kernel': ['linear']},
                                 {'C': [2 ** s for s in range(-5, 6, 2)], 'gamma': [2 ** s for s in range(3, -15, -2)], 'kernel': ['rbf']}]
-            clf = GridSearchCV(SVC(probability=True, cache_size=cache_size), hyper_parameters, cv=StratifiedKFold(cv, shuffle=True), scoring=scoring, n_jobs=n_jobs, verbose=100)
+            clf = GridSearchCV(SVC(probability=True, cache_size=cache_size), hyper_parameters, cv=StratifiedKFold(cv, shuffle=True), scoring=scoring, n_jobs=n_jobs, verbose=verbose)
 
         # SVM, but with multiple kernels linearly combined
         if method == 'mkl':
             from multi_kernel_SVM import multi_kernel_SVM
-            mkl = multi_kernel_SVM(probability=True, cache_size=cache_size, dims=self.dims)
+            mkl = multi_kernel_SVM(probability=True, cache_size=cache_size, dims=subpart_dims)
 
             if use_bayes_opt:
                 # BO to determine next parameters to test within the pre-defined search space.
@@ -700,7 +712,7 @@ class Modality(object):
                     hyper_parameters[0][hp_name] = [0, 0.01, *[x/100 for x in range(5, 100, 5)], 0.99, 1]
 
                 clf = GridSearchCV(mkl, hyper_parameters, cv=StratifiedKFold(cv, shuffle=True), scoring=scoring,
-                                   n_jobs=n_jobs, verbose=100)
+                                   n_jobs=n_jobs, verbose=2)
 
         # Random Forest
         if method == 'rf':
@@ -710,7 +722,7 @@ class Modality(object):
                                 'min_samples_leaf': [1, 2, 3, 4, 5],
                                 'criterion': ['gini', 'entropy']
                                 }]
-            clf = GridSearchCV(RandomForestClassifier(n_jobs=n_jobs, random_state=0), hyper_parameters, cv=StratifiedKFold(cv, shuffle=True), scoring=scoring, n_jobs=n_jobs, verbose=100)
+            clf = GridSearchCV(RandomForestClassifier(n_jobs=n_jobs, random_state=0), hyper_parameters, cv=StratifiedKFold(cv, shuffle=True), scoring=scoring, n_jobs=n_jobs, verbose=verbose)
 
         # Multi-layer Perceptron
         if method == 'mlp':
@@ -721,7 +733,7 @@ class Modality(object):
                                  'dropout_rate': [0.1, 0.3],
                                  }]
             model = KerasClassifier(build_fn=DNN_models.mlp_model, input_dim=self.X_train.shape[1], verbose=0)
-            clf = GridSearchCV(estimator=model, param_grid=hyper_parameters, cv=StratifiedKFold(cv, shuffle=True), scoring=scoring, n_jobs=n_jobs, verbose=100)
+            clf = GridSearchCV(estimator=model, param_grid=hyper_parameters, cv=StratifiedKFold(cv, shuffle=True), scoring=scoring, n_jobs=n_jobs, verbose=verbose)
 
         # Perform CV against the AE-compressed data
         clf.fit(self.X_train, self.y_train)
@@ -741,11 +753,12 @@ class Modality(object):
                    'classfication_time(s)': round((time.time() - clf_start_time), 2),
                    'best_hyperparameter': str(clf.best_params_)
                    }
-        print(metrics)
         return metrics
 
 
-def train_modality(Xfile, Yfile, AE_type, gradient_threshold=100, latent_dims=8, max_training_duration=np.inf, seed=42, classifiers_to_train=[]):
+def train_modality(Xfile, Yfile, AE_type, gradient_threshold=100, latent_dims=8, num_filters=3,
+                   num_internal_layers=1, use_2D_kernels=False,
+                   max_training_duration=np.inf, seed=42, classifiers_to_train=[]):
     """
     A function that trains the AE only, but not the classifier itself.
 
@@ -770,9 +783,19 @@ def train_modality(Xfile, Yfile, AE_type, gradient_threshold=100, latent_dims=8,
         reduce the likelihood of gradient explosion, however might considerably
         increase the training time. Not used by default.
 
-    latent_dims : int
+    latent_dims : int or array of ints
         Number of dimensions of the latent space. 8 by default and only used by
-        AE and VAE.
+        AE and VAE. To include hidden layer(s), set latent_dims to a list of ints
+
+    num_filters : int
+        Number of kernels to be trained. CAE only, 3 by default.
+
+    num_internal_layers : int
+        Number of layers between the input and latent layer. CAE only, 1 by default.
+
+    use_2D_kernels : bool
+        Whether to convert the feature vector into a square matrix and train 2D
+        kernels. The default behaviour is to keep as is and train 1D kernels.
 
     max_training_duration : float
         Maximum duration to allow during the AE training, in seconds. If none
@@ -788,7 +811,7 @@ def train_modality(Xfile, Yfile, AE_type, gradient_threshold=100, latent_dims=8,
 
     # create an object and load data
     # Each different experimental component needs to be treated as 1 separate Modality.
-    m = Modality(Xfile=Xfile, Yfile=Yfile, dims=latent_dims, seed=seed, clipnorm_lim=gradient_threshold, max_training_duration=max_training_duration)
+    m = Modality(Xfile=Xfile, Yfile=Yfile, seed=seed, clipnorm_lim=gradient_threshold, max_training_duration=max_training_duration)
 
     # load data into the object
     m.load_X_data()
@@ -796,14 +819,19 @@ def train_modality(Xfile, Yfile, AE_type, gradient_threshold=100, latent_dims=8,
     # time check after data has been loaded
     m.t_start = time.time()
 
+    # Preprocess dimensions: single int vs. list of ints
+    if type(latent_dims) == int:
+        latent_dims = [latent_dims]
+
     # Representation learning (Dimensionality reduction)
     AE_type = AE_type.upper()
     if AE_type in ['AE', 'SAE', 'DAE']:
-        m.ae(dims=[latent_dims], loss='mse', verbose=0)
+        m.ae(dims=latent_dims, loss='mse', verbose=0)
     elif AE_type == 'CAE':
-        m.cae(num_internal_layers=latent_dims, loss='mse', verbose=0)
+        m.cae(num_internal_layers=num_internal_layers, loss='mse', num_filters=num_filters,
+              use_2D=use_2D_kernels, verbose=0)
     elif AE_type == 'VAE':
-        m.vae(dims=[latent_dims], loss='mse', verbose=0)
+        m.vae(dims=latent_dims, loss='mse', verbose=0)
     elif AE_type == 'GRP':
         m.grp()
     elif AE_type == 'PCA':
@@ -826,7 +854,8 @@ def train_modality(Xfile, Yfile, AE_type, gradient_threshold=100, latent_dims=8,
 
         # multi-kernel learning with SVM
         if 'mkl' in classifiers_to_train:
-            m.classification(method='mkl', cv=numFolds, scoring=scoring, cache_size=1000, use_bayes_opt=False)
+            m.classification(method='mkl', cv=numFolds, scoring=scoring, cache_size=1000, use_bayes_opt=False,
+                             subpart_dims=latent_dims)
 
         # Random forest
         if 'rf' in classifiers_to_train:
