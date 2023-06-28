@@ -1,25 +1,27 @@
-# Helicobacter_prognosis
-Helicobacter_prognosis is a representation learning-based tool that aims to predict the prognosis of the infected individuals by machine learning on medical high-throughput data that can be collected non-invasively. Inspired by [DeepMicro](https://www.nature.com/articles/s41598-020-63159-5).
+# Multi modality prediction
+Multi modality prediction is a representation learning-based tool that aims to correctly predict the classes of previously unseen data by machine learning on high-throughput high-dimensional data. If data from multiple data acquisition methods are available, their statistical power is combined to improve the classification accuracy.
+
+Inspired by [DeepMicro](https://www.nature.com/articles/s41598-020-63159-5).
 
 
 ## Quick Setup Guide
 
-**Step 1:** Change the current working directory to the location where you want to install `Helicobacter_prognosis`.
+**Step 1:** Change the current working directory to the location where you want to install `multi_modality_prediction`.
 
 **Step 2:** Clone the repository using git command.
 ```
-git clone https://github.com/tuncK/Helicobacter_prognosis
-cd Helicobacter_prognosis
+git clone https://github.com/tuncK/multi_modality_prediction
+cd multi_modality_prediction
 ```
 
 **Step 3:** Create a virtual environment using conda.
 ```
-conda create --name hp python=3.11
+conda create --name mmp python=3.11
 ```
 
 **Step 4:** Activate the created virtual environment.
 ```
-conda activate hp
+conda activate mmp
 ```
 
 **Step 5:** Install required packages
