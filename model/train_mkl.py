@@ -8,25 +8,21 @@ import autoencoders
 import pandas as pd
 import json
 
-# List of data files to use for training
-# Features should be on the rows, 1st column with feature label
-# Samples should be on the columns, each column should have a common sample name
-data_tables = [
-                    '../dm_data/IBD_X_abundance.tsv',
-                    '../dm_data/IBD_X_marker.tsv'
-              ]
 
-# Train an AE for each modality separately.
-# Find the best param configuration with BOHB without saving the model
-# Then save the reduced representation of the data with best hyperparams found.
-X_latent_files = []
-for data_table in data_tables:
-    print('Representation learning on %s' % data_table)
-    best_conf = startBOHB.start_BOHB(min_budget=30, max_budget=100, data_table=data_table, n_workers=6, n_iterations=10)
+def train_1_AE(Xfile, Yfile, latent_filename):
+    """
+    Find the best param configuration with BOHB without saving the model
+    Then save the reduced representation of the data with best hyperparams found.
+    """
+
+    # This will try many hyperparam combinations.
+    # Despite using BOHB etc., many models will be trained, so might take a while.
+    best_conf = startBOHB.start_BOHB(min_budget=60, max_budget=300, Xfile=Xfile,
+                                     Yfile=Yfile, n_workers=6, n_iterations=10)
 
     # This time, we need to save the result (and feed into the classifier later on)
     best_conf = MyWorker.convert_hyper_params(best_conf)
-    m = autoencoders.Modality(Xfile=data_table, Yfile=None, **best_conf)
+    m = autoencoders.Modality(Xfile=Xfile, Yfile=None, **best_conf)
 
     # load data into the object
     m.load_X_data()
@@ -41,48 +37,86 @@ for data_table in data_tables:
     else:
         raise NameError('Autoencoder type %s is not available' % best_conf['AE_type'])
 
-    # Representation learning, no time limit
+    # Perform representation learning without time limit
+    # with best AE type and best hyperparams
     print('Started full learning with best AE hyperparams: %s' % best_conf)
     ae_func(loss='mse', verbose=0, save_model=True, **best_conf)
 
     # Write the learned representation of the training set as a file
-    filename = '../results/' + data_table.split('/')[-1].split('.')[0] + '_latent.tsv'
-    m.export_transformed_data(filename)
-    X_latent_files.append(filename)
+    m.export_transformed_data(latent_filename)
 
     # Write the best AE hyperparams to file
-    filename = '../results/' + data_table.split('/')[-1].split('.')[0] + '_AE_params.json'
+    filename = latent_filename.replace('_latent.tsv', '_AEparams.json')
     with open(filename, 'w') as file:
         file.write(json.dumps(best_conf))
 
-print('Combining AE of each modality...')
-latent_dfs = []
-dims = []
-for filename in X_latent_files:
-    df = pd.read_csv(filename, sep='\t', header=0, index_col=0)
-    latent_dfs.append(df)
-    dims.append(df.shape[0])
 
-print('Writing the combined dataset to file...')
-df_combined = pd.concat(latent_dfs, axis=0, join='inner')
-df_combined.columns = [x.split('.')[0] for x in list(df_combined)]
-df_combined.to_csv('../results/all_latent.tsv', sep='\t', header=True, index=True)
+def combine_modalities(X_latent_files, combined_filename):
+    """
+    Combines the latent dimensions of each modality learnt before
+    as a single table.
+    """
 
+    latent_dfs = []
+    dims = []
+    for filename in X_latent_files:
+        df = pd.read_csv(filename, sep='\t', header=0, index_col=0)
+        latent_dfs.append(df)
+        dims.append(df.shape[0])
 
-# Final classifier
-# Now train an MKL that takes all reduced representations and predicts the class labels
+    print('Writing the combined dataset to file...')
+    df_combined = pd.concat(latent_dfs, axis=0, join='inner')
+    df_combined.columns = [x.split('.')[0] for x in list(df_combined)]
+    df_combined.to_csv(combined_filename, sep='\t', header=True, index=True)
+    return dims
+
 
 # Generate a fake modality containing all datasets
 # We use this for classification only, no AE
-m = autoencoders.Modality(Xfile='../results/all_latent.tsv', Yfile='../dm_data/IBD_Y.tsv')
-m.load_X_data()
-m.load_Y_data(dtype='int64')
+def run_MKL(combined_file, modality_dims, Yfile):
+    """
+    Train an MKL that takes all reduced representations and predicts the class
+    labels based on all dimensions combined.
+    """
 
-print('Starting classification with MKL...')
-numFolds = 5
-scoring = 'roc_auc'  # options: 'roc_auc', 'accuracy', 'f1', 'recall', 'precision'
-classifier_metrics = m.classification(method='mkl', cv=numFolds, scoring=scoring, cache_size=1000, use_bayes_opt=False,
-                                      subpart_dims=dims, verbose=1)
-print(classifier_metrics)
+    m = autoencoders.Modality(Xfile=combined_file, Yfile=Yfile)
+    m.load_X_data()
+    m.load_Y_data(dtype='int64')
+
+    print('Starting classification with MKL...')
+    numFolds = 5
+    scoring = 'roc_auc'  # options: 'roc_auc', 'accuracy', 'f1', 'recall', 'precision'
+    classifier_metrics = m.classification(method='mkl', cv=numFolds, scoring=scoring, cache_size=1000, use_bayes_opt=False,
+                                          subpart_dims=modality_dims, verbose=1)
+    print(classifier_metrics)
+    return classifier_metrics
+
+
+#########################################################################
+# List of data files to use for training
+# Features should be on the rows, 1st column with feature label
+# Samples should be on the columns, each column should have a common sample name
+data_tables = [
+                    '../dm_data/IBD_X_abundance.tsv',
+                    '../dm_data/IBD_X_marker.tsv'
+              ]
+
+Yfile = '../dm_data/IBD_Y.tsv'
+
+
+# Names for the AE-compressed data tables
+X_latent_files = ['../results/' + x.split('/')[-1].split('.')[0] + '_latent.tsv' for x in data_tables]
+
+# Train an AE for each modality separately.
+for i in range(data_tables):
+    print('Representation learning on %s' % data_tables[i])
+    train_1_AE(Xfile=data_tables[i], Yfile=Yfile, latent_filename=X_latent_files[i])
+
+# Concatenate latent dims of each modality and write to file
+combined_filename = '../results/all_latent.tsv'
+modality_dims = combine_modalities(X_latent_files, combined_filename)
+
+# Train MKL on the file with all latent dims combined.
+run_MKL(combined_file=combined_filename, modality_dims=modality_dims, Yfile=Yfile)
 
 print('All done')

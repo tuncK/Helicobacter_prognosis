@@ -635,7 +635,7 @@ class Modality(object):
         return min(self.history.history['val_loss'])
 
     # Classification
-    def classification(self, method='svm', cv=5, scoring='roc_auc', n_jobs=-1, cache_size=10000, use_bayes_opt=False, subpart_dims=None, verbose=2):
+    def classification(self, method='svm', cv=5, scoring='roc_auc', n_jobs=-1, cache_size=10000, use_bayes_opt=False, subpart_dims=None, verbose=0):
         """
         Train the classifier.
 
@@ -839,34 +839,36 @@ def train_modality(Xfile, Yfile, AE_type, gradient_threshold=100, latent_dims=8,
     else:
         raise NameError('Autoencoder type %s is not available' % AE_type)
 
-    # OPTIONAL CLASSIFIER for 1 modality only
-    if len(classifiers_to_train) > 0:
-        # Optional training attempt of classifiers. Iff so, labelled data is needed.
+    if len(classifiers_to_train) == 0:
+        val_loss = m.get_min_loss()
+        return val_loss
+    else:
+        # Optional training attempt of classifiers for 1 modality only.
+        # Iff so, labelled data is needed.
         numFolds = 5
         scoring = 'roc_auc'  # options: 'roc_auc', 'accuracy', 'f1', 'recall', 'precision'
 
         # Training classification model(s)
-        m.load_Y_data(filename=Yfile, dtype='int64')
+        m.load_Y_data()
 
         # Support vector classifier
         if 'svm' in classifiers_to_train:
-            m.classification(method='svm', cv=numFolds, scoring=scoring, cache_size=1000)
+            metrics = m.classification(method='svm', cv=numFolds, scoring=scoring, cache_size=1000)
 
         # multi-kernel learning with SVM
         if 'mkl' in classifiers_to_train:
-            m.classification(method='mkl', cv=numFolds, scoring=scoring, cache_size=1000, use_bayes_opt=False,
-                             subpart_dims=latent_dims)
+            metrics = m.classification(method='mkl', cv=numFolds, scoring=scoring, cache_size=1000, use_bayes_opt=False,
+                                       subpart_dims=latent_dims)
 
         # Random forest
         if 'rf' in classifiers_to_train:
-            m.classification(method='rf', cv=numFolds, scoring=scoring)
+            metrics = m.classification(method='rf', cv=numFolds, scoring=scoring)
 
         # Multi layer perceptron
         if 'mlp' in classifiers_to_train:
-            m.classification(method='mlp', cv=numFolds, scoring=scoring)
+            metrics = m.classification(method='mlp', cv=numFolds, scoring=scoring)
 
-    val_loss = m.get_min_loss()
-    return val_loss
+        return 1 - metrics['AUC']
 
 
 if __name__ == '__main__':

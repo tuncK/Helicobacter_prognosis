@@ -1,4 +1,4 @@
-# Inhedrited from Deepmicro, defines classes for auto-encoders
+# Detailed definition of auto-encoder models
 
 from keras.models import Sequential, Model
 from keras.layers import Dense, Dropout, Input, Lambda, Reshape, Flatten

@@ -51,9 +51,10 @@ class MyWorker(Worker):
         Name coined for your current hpbanster run, such as 'best_ever_project'. Arbitrary.
     """
 
-    def __init__(self, data_table, *args, **kwargs):
+    def __init__(self, Xfile, Yfile, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.data_table = data_table
+        self.Xfile = Xfile
+        self.Yfile = Yfile
 
     def compute(self, config, budget, **kwargs):
         """
@@ -68,9 +69,18 @@ class MyWorker(Worker):
                 'loss' (scalar)
                 'info' (dict)
         """
-
         conf = convert_hyper_params(config)
-        val_loss = autoencoders.train_modality(Xfile=self.data_table, Yfile=None, **conf)
+
+        # Option 1: Dimensionality reduction with BOHB-determined hyperparams
+        # This solves for argmin(validation loss of AE)
+        val_loss = autoencoders.train_modality(Xfile=self.Xfile, Yfile=self.Yfile, max_training_duration=budget, **conf)
+
+        # Option 2: we can use the performance of the classifier as the cost function, instead.
+        # This solves for argmin(1-AUC of SVM classifier)
+        # There might be OVERFITTING, one needs a validation set.
+        # val_loss = autoencoders.train_modality(Xfile=self.Xfile, Yfile=self.Yfile, max_training_duration=budget,
+        #                                       classifiers_to_train=['svm'], **conf)
+
         return ({
                  'loss': float(val_loss),  # this is the a mandatory field to run hyperband
                  'info': val_loss  # can be used for any user-defined information - also mandatory
@@ -87,14 +97,18 @@ class MyWorker(Worker):
 
         # CAE-specific hyperparamms
         num_internal_layers = CS.UniformIntegerHyperparameter('num_internal_layers', lower=1, upper=2)
+        log2_num_filters = CS.UniformIntegerHyperparameter('log2_num_filters', lower=1, upper=6)
         use_2D_kernels = CS.Categorical('use_2D_kernels', [True, False])
         cond_1 = CS.EqualsCondition(num_internal_layers, AE_type, 'CAE')
-        cond_2 = CS.EqualsCondition(use_2D_kernels, AE_type, 'CAE')
+        cond_2 = CS.EqualsCondition(log2_num_filters, AE_type, 'CAE')
+        cond_3 = CS.EqualsCondition(use_2D_kernels, AE_type, 'CAE')
 
         # SAE/DAE and VAE only
         log2_latent_dims = CS.UniformIntegerHyperparameter('log2_latent_dims', lower=2, upper=10)
-        cond_3 = CS.NotEqualsCondition(log2_latent_dims, AE_type, 'CAE')
+        cond_4 = CS.NotEqualsCondition(log2_latent_dims, AE_type, 'CAE')
 
-        config.add_hyperparameters([AE_type, log10_gradient_threshold, seed, num_internal_layers, use_2D_kernels, log2_latent_dims])
-        config.add_conditions([cond_1, cond_2, cond_3])
+        # Add all parameters and constraints to the configuration space
+        config.add_hyperparameters([AE_type, log10_gradient_threshold, seed, num_internal_layers,
+                                    log2_num_filters, use_2D_kernels, log2_latent_dims])
+        config.add_conditions([cond_1, cond_2, cond_3, cond_4])
         return config

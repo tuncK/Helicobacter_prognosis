@@ -24,7 +24,7 @@ from MyWorker import MyWorker
 run_id = "hp_BOHB"
 
 
-def start_BOHB(min_budget, max_budget, data_table, n_workers=1, n_iterations=10):
+def start_BOHB(min_budget, max_budget, Xfile, Yfile=None, n_workers=1, n_iterations=10):
     """
     Perform BOHB on the local system to find hyper-parameters
 
@@ -36,8 +36,12 @@ def start_BOHB(min_budget, max_budget, data_table, n_workers=1, n_iterations=10)
     max_budget : Maximum computing resources to be used, in seconds.
         Limits how much the well-performing models will get towards the end.
 
-    data_table : Training data array-like of shape (n_features, n_samples).
+    Xfile : Training data, array-like of shape (n_features, n_samples).
         First column and rows are assumed to be labels and ignored.
+
+    Yfile : Training labels, array-like of shape (n_samples, 1).
+        First column should contain sample identifiers and match the header column
+        of Xfile.
 
     n_workers : Number of parallel processes to start for BOHB. For best performance,
         should be set to number of cores. Defaults to 1.
@@ -77,7 +81,8 @@ def start_BOHB(min_budget, max_budget, data_table, n_workers=1, n_iterations=10)
             time.sleep(1)
 
             print('Starting worker wid=%d' % wid)
-            t = Thread(target=os.system, args=['python startBOHB.py --worker --data_in %s' % data_table], daemon=False)
+            t = Thread(target=os.system, daemon=False,
+                       args=['python startBOHB.py --worker --input_X %s --input_Y %s' % (Xfile, Yfile)])
             t.start()
             worker_threads.append(t)
 
@@ -88,7 +93,7 @@ def start_BOHB(min_budget, max_budget, data_table, n_workers=1, n_iterations=10)
     else:
         # 1 worker only, i.e. single threaded via current shell
         print('Starting the worker...')
-        w = MyWorker(data_table=data_table, nameserver='127.0.0.1', run_id=run_id)
+        w = MyWorker(Xfile=Xfile, Yfile=Yfile, nameserver='127.0.0.1', run_id=run_id)
         w.run(background=True)
 
     # Run an optimizer BOHB
@@ -126,7 +131,8 @@ if __name__ == '__main__':
 
     # Parse input arguments.
     parser = argparse.ArgumentParser(description='BOHB - Local or parallel execution')
-    parser.add_argument('--data_in', type=str, help='Data table to be used for the training.')
+    parser.add_argument('--input_X', type=str, help='Data table to be used for the training.')
+    parser.add_argument('--input_Y', type=str, help='Data labels to be used for the training.', required=False)
     parser.add_argument('--min_budget', type=int, help='Minimum budget (wall time, s) used during the optimization.', default=30)
     parser.add_argument('--max_budget', type=int, help='Maximum budget (wall time, s) used during the optimization.', default=10*60)
     parser.add_argument('--n_iterations', type=int, help='Number of iterations performed by the optimizer', default=10)
@@ -139,8 +145,9 @@ if __name__ == '__main__':
     # They will hang in the run state till the end.
     if args.worker:
         print('Entering worker mode')
-        w = MyWorker(data_table=args.data_in, nameserver='127.0.0.1', run_id=run_id)
+        w = MyWorker(Xfile=args.input_X, Yfile=args.input_Y, nameserver='127.0.0.1', run_id=run_id)
         w.run(background=False)
         exit(0)
     else:
-        start_BOHB(min_budget=args.min_budget, data_table=args.data_in, max_budget=args.max_budget, n_workers=1, n_iterations=10)
+        start_BOHB(min_budget=args.min_budget, Xfile=args.input_X, Yfile=args.input_Y, max_budget=args.max_budget,
+                   n_workers=1, n_iterations=10)
