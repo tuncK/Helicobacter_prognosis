@@ -26,7 +26,7 @@ conda activate mmp
 
 **Step 5:** Install required packages
 ```
-pip install hpbandster==0.7.4 keras==2.12.0 matplotlib==3.7.1 numpy==1.24.3 pandas==2.0.2 scikit-learn==1.2.2 scikit-optimize==0.9.0 scipy==1.10.1
+pip install hpbandster==0.7.4 keras==2.12.0 matplotlib==3.7.1 numpy==1.23.5 pandas==2.0.2 scikit-learn==1.2.2 scikit-optimize==0.9.0 scipy==1.10.1
 ```
 
 **Step 6:** Install tensorflow.
