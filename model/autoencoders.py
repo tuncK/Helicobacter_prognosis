@@ -9,7 +9,6 @@
 import numpy as np
 import pandas as pd
 import matplotlib
-matplotlib.use('agg')
 import matplotlib.pyplot as plt
 
 # importing sklearn
@@ -48,6 +47,7 @@ import DNN_models
 
 # Fix a np.random.seed for reproducibility in numpy processing
 np.random.seed(42)
+matplotlib.use('agg')
 
 
 class Modality(object):
@@ -709,7 +709,7 @@ class Modality(object):
                 # w3 =  [ 0, 0.01, 0.1, 0.5, 0.75, 1] etc.
                 for i in range(1, len(mkl.dims)):
                     hp_name = 'w%d' % i
-                    hyper_parameters[0][hp_name] = [0, 0.01, *[x/100 for x in range(5, 100, 5)], 0.99, 1]
+                    hyper_parameters[0][hp_name] = [0, 0.01, *[x / 100 for x in range(5, 100, 5)], 0.99, 1]
 
                 clf = GridSearchCV(mkl, hyper_parameters, cv=StratifiedKFold(cv, shuffle=True), scoring=scoring,
                                    n_jobs=n_jobs, verbose=2)
@@ -717,21 +717,21 @@ class Modality(object):
         # Random Forest
         if method == 'rf':
             hyper_parameters = [{
-                                'n_estimators': [s for s in range(100, 1001, 200)],
-                                'max_features': ['sqrt', 'log2'],
-                                'min_samples_leaf': [1, 2, 3, 4, 5],
-                                'criterion': ['gini', 'entropy']
-                                }]
+                'n_estimators': [s for s in range(100, 1001, 200)],
+                'max_features': ['sqrt', 'log2'],
+                'min_samples_leaf': [1, 2, 3, 4, 5],
+                'criterion': ['gini', 'entropy']
+            }]
             clf = GridSearchCV(RandomForestClassifier(n_jobs=n_jobs, random_state=0), hyper_parameters, cv=StratifiedKFold(cv, shuffle=True), scoring=scoring, n_jobs=n_jobs, verbose=verbose)
 
         # Multi-layer Perceptron
         if method == 'mlp':
             hyper_parameters = [{
-                                 'numHiddenLayers': [1, 2, 3],
-                                 'epochs': [30, 50, 100, 200, 300],
-                                 'numUnits': [10, 30, 50, 100],
-                                 'dropout_rate': [0.1, 0.3],
-                                 }]
+                'numHiddenLayers': [1, 2, 3],
+                'epochs': [30, 50, 100, 200, 300],
+                'numUnits': [10, 30, 50, 100],
+                'dropout_rate': [0.1, 0.3]
+            }]
             model = KerasClassifier(build_fn=DNN_models.mlp_model, input_dim=self.X_train.shape[1], verbose=0)
             clf = GridSearchCV(estimator=model, param_grid=hyper_parameters, cv=StratifiedKFold(cv, shuffle=True), scoring=scoring, n_jobs=n_jobs, verbose=verbose)
 

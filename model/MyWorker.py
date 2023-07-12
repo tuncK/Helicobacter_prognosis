@@ -82,9 +82,9 @@ class MyWorker(Worker):
         #                                       classifiers_to_train=['svm'], **conf)
 
         return ({
-                 'loss': float(val_loss),  # this is the a mandatory field to run hyperband
-                 'info': val_loss  # can be used for any user-defined information - also mandatory
-                })
+            'loss': float(val_loss),  # this is the a mandatory field to run hyperband
+            'info': val_loss  # can be used for any user-defined information - also mandatory
+        })
 
     @staticmethod
     def get_configspace():

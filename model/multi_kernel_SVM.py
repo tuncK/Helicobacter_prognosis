@@ -215,48 +215,48 @@ class multi_kernel_SVM (SVC):
         def compute_kernel(x, y):
             # n-1 random points need to find n weights
             # And then you split the 0-1 interval into n segments
-            angles = [self.w1, self.w2, self.w3, self.w4, self.w5][:self.num_AE-1]
+            angles = [self.w1, self.w2, self.w3, self.w4, self.w5][:self.num_AE - 1]
 
             # The successive spherical coordinates could have been evaluated by x_k = x_k-1 * tan() * cos()
             # But opting for analytical evaluation here for numerical stability
             # sin(a)*sin(b)*...*sin(y)*cos(z)
             spherical_unit_vec = []
-            for space_dim in range(len(angles)+1):
+            for space_dim in range(len(angles) + 1):
                 term = 1
                 for j in range(0, space_dim):
-                    term *= np.sin(np.pi/2*angles[j])
+                    term *= np.sin(np.pi / 2 * angles[j])
 
                 if space_dim < len(angles):
                     # All coordinates x1, x2, x3, ... x_(n-1) except x_n are:
                     # sin(a)*sin(b)*...*sin(y)*cos(z)
-                    term *= np.cos(np.pi/2*angles[space_dim])
+                    term *= np.cos(np.pi / 2 * angles[space_dim])
 
                 spherical_unit_vec.append(term)
 
             # "weights" is a point on x+y+z+... = 1 plane
             # At the end, weights should sum up to 1.
-            r = 1/np.sum(spherical_unit_vec)
+            r = 1 / np.sum(spherical_unit_vec)
             weights = r * np.array(spherical_unit_vec)
 
             computed_kernel = np.zeros((x.shape[0], y.shape[0]))
             for i in range(self.num_AE):
-                x_subset = x[:, block_endpoints[i]:block_endpoints[i+1]]
-                y_subset = y[:, block_endpoints[i]:block_endpoints[i+1]]
+                x_subset = x[:, block_endpoints[i]:block_endpoints[i + 1]]
+                y_subset = y[:, block_endpoints[i]:block_endpoints[i + 1]]
                 computed_kernel += weights[i] * kernel_eval(x_subset, y_subset)
                 return computed_kernel
 
         super().__init__(
-                    kernel=compute_kernel,
-                    gamma=gamma,
-                    tol=tol,
-                    C=C,
-                    shrinking=shrinking,
-                    probability=probability,
-                    cache_size=cache_size,
-                    class_weight=class_weight,
-                    verbose=verbose,
-                    max_iter=max_iter,
-                    decision_function_shape=decision_function_shape,
-                    break_ties=break_ties,
-                    random_state=random_state
-                )
+            kernel=compute_kernel,
+            gamma=gamma,
+            tol=tol,
+            C=C,
+            shrinking=shrinking,
+            probability=probability,
+            cache_size=cache_size,
+            class_weight=class_weight,
+            verbose=verbose,
+            max_iter=max_iter,
+            decision_function_shape=decision_function_shape,
+            break_ties=break_ties,
+            random_state=random_state
+        )

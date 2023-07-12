@@ -6,19 +6,18 @@
 # to different problems at hand.
 
 import logging
-logging.basicConfig(level=logging.INFO)
-
 import os
 import time
 
 import hpbandster.core.nameserver as hpns
-# import hpbandster.core.result as hpres
-
 from threading import Thread
 from hpbandster.optimizers import BOHB as BOHB
-# from hpbandster.examples.commons import MyWorker
 from MyWorker import MyWorker
 
+
+# Increase logging so that interactions between BOHB server
+# and workers is visible.
+logging.basicConfig(level=logging.INFO)
 
 # This uniquely identifies a run of any HpBandSter optimizer.
 run_id = "hp_BOHB"
@@ -119,7 +118,7 @@ def start_BOHB(min_budget, max_budget, Xfile, Yfile=None, n_workers=1, n_iterati
     print('Best found configuration:', id2config[incumbent]['config'])
     print('A total of %i unique configurations were sampled.' % len(id2config.keys()))
     print('A total of %i runs were executed.' % len(res.get_all_runs()))
-    print('Total budget corresponds to %.1f full function evaluations.' % (sum([r.budget for r in all_runs])/max_budget))
+    print('Total budget corresponds to %.1f full function evaluations.' % (sum([r.budget for r in all_runs]) / max_budget))
     print('The run took  %.1f seconds to complete.' % (all_runs[-1].time_stamps['finished'] - all_runs[0].time_stamps['started']))
 
     best_configuration = id2config[incumbent]['config']
@@ -134,7 +133,7 @@ if __name__ == '__main__':
     parser.add_argument('--input_X', type=str, help='Data table to be used for the training.')
     parser.add_argument('--input_Y', type=str, help='Data labels to be used for the training.', required=False)
     parser.add_argument('--min_budget', type=int, help='Minimum budget (wall time, s) used during the optimization.', default=30)
-    parser.add_argument('--max_budget', type=int, help='Maximum budget (wall time, s) used during the optimization.', default=10*60)
+    parser.add_argument('--max_budget', type=int, help='Maximum budget (wall time, s) used during the optimization.', default=10 * 60)
     parser.add_argument('--n_iterations', type=int, help='Number of iterations performed by the optimizer', default=10)
     parser.add_argument('--n_workers', type=int, help='Number of workers to run in parallel.', default=1)
     parser.add_argument('--worker', help='Flag to turn this into a worker process', action='store_true')

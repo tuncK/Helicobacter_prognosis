@@ -97,23 +97,23 @@ def run_MKL(combined_file, modality_dims, Yfile):
 # Features should be on the rows, 1st column with feature label
 # Samples should be on the columns, each column should have a common sample name
 data_tables = [
-                    '../dm_data/Cirrhosis_X_abundance.tsv',
-                 #   '../dm_data/Cirrhosis_X_marker.tsv',
-                 #   '../dm_data/Colorectal_X_abundance.tsv',
-                 #   '../dm_data/Colorectal_X_marker.tsv',
-                 #   '../dm_data/IBD_X_abundance.tsv',
-                 #   '../dm_data/IBD_X_marker.tsv',
-                 #   '../dm_data/T2D_X_abundance.tsv',
-                 #   '../dm_data/T2D_X_marker.tsv',
-                 #   '../dm_data/WT2D_X_abundance.tsv',
-                 #   '../dm_data/WT2D_X_marker.tsv'
-              ]
+    '../dm_data/Cirrhosis_X_abundance.tsv',
+    #   '../dm_data/Cirrhosis_X_marker.tsv',
+    #   '../dm_data/Colorectal_X_abundance.tsv',
+    #   '../dm_data/Colorectal_X_marker.tsv',
+    #   '../dm_data/IBD_X_abundance.tsv',
+    #   '../dm_data/IBD_X_marker.tsv',
+    #   '../dm_data/T2D_X_abundance.tsv',
+    #   '../dm_data/T2D_X_marker.tsv',
+    #   '../dm_data/WT2D_X_abundance.tsv',
+    #   '../dm_data/WT2D_X_marker.tsv'
+]
 
 Yfile = '../dm_data/Cirrhosis_Y.tsv'
-#Yfile = '../dm_data/Colorectal_Y.tsv'
-#Yfile = '../dm_data/IBD_Y.tsv'
-#Yfile = '../dm_data/T2D_Y.tsv'
-#Yfile = '../dm_data/WT2D_Y.tsv'
+# Yfile = '../dm_data/Colorectal_Y.tsv'
+# Yfile = '../dm_data/IBD_Y.tsv'
+# Yfile = '../dm_data/T2D_Y.tsv'
+# Yfile = '../dm_data/WT2D_Y.tsv'
 
 
 # Names for the AE-compressed data tables

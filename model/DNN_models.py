@@ -168,7 +168,7 @@ def conv_1D_autoencoder(input_len, num_internal_layers, num_filters=3, use_max_p
     y = Reshape(final_shape)(y)
 
     # internal layers of the decoder
-    for i in range(num_internal_layers-1, -1, -1):
+    for i in range(num_internal_layers - 1, -1, -1):
         if use_max_pooling:
             y = UpSampling1D(2)(y)
 
@@ -268,7 +268,7 @@ def conv_2D_autoencoder(input_len, num_internal_layers, num_filters=3, use_max_p
     y = Reshape(reshapeDim)(y)
 
     # internal layers of the decoder
-    for i in range(num_internal_layers-1, -1, -1):
+    for i in range(num_internal_layers - 1, -1, -1):
         if use_max_pooling:
             y = UpSampling2D((2, 2))(y)
 
