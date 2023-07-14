@@ -34,7 +34,7 @@ import keras
 import keras.backend as K
 from keras.wrappers.scikit_learn import KerasClassifier
 from keras.callbacks import EarlyStopping, ModelCheckpoint, LambdaCallback
-from keras.models import Model, load_model
+from keras.models import Model
 from keras.optimizers import Adam
 
 # importing util libraries
@@ -43,6 +43,7 @@ import time
 
 # importing custom library
 import DNN_models
+import LSTM
 
 
 # Fix a np.random.seed for reproducibility in numpy processing
@@ -231,8 +232,8 @@ class Modality(object):
                 self.stopped_epoch = epoch
 
     # Shallow Autoencoder & Deep Autoencoder
-    def ae(self, dims=[50], epochs=10000, batch_size=100, verbose=2, loss='mean_squared_error', latent_act=False,
-           output_act=False, act='relu', patience=20, val_rate=0.2, save_model=False, **kwargs):
+    def sae(self, dims=[50], epochs=10000, batch_size=100, verbose=2, loss='mean_squared_error', latent_act=False,
+            output_act=False, act='relu', patience=20, val_rate=0.2, save_model=False, **kwargs):
 
         """
         Train the shallow (1-layer) or deep (>1 layers) auto-encoder
@@ -257,7 +258,7 @@ class Modality(object):
             Refer to keras docs: https://keras.io/api/losses/
 
         act : str
-            Actovatopm function to use. 'relu' by default.
+            Activation function to use. 'relu' by default.
 
         latent_act : bool
             Whether to use activation function for the latent layer. False by default.
@@ -295,21 +296,7 @@ class Modality(object):
             self.prefix = self.prefix + 's'
 
         # callbacks for each epoch
-        # Disabling model saving improves the execution speed, especially if model size is big
-        callbacks = [EarlyStopping(monitor='val_loss', patience=patience, mode='min', verbose=1),
-                     self.TimeLimit_Callback(max_training_duration=self.max_training_duration)]
-
-        # Exports the model to file at each iteration.
-        # Due to early stopping, the final model is not necessarily the best model.
-        # Constant disk IO may slow down the training considerably.
-        if save_model:
-            model_out_file = self.output_dir + '/' + self.modelName + '.h5'
-            model_write_callback = ModelCheckpoint(model_out_file, monitor='val_loss', mode='min', verbose=0, save_best_only=True)
-            callbacks.append(model_write_callback)
-
-            # clean up model checkpoint before use
-            if os.path.isfile(model_out_file):
-                os.remove(model_out_file)
+        callbacks = self.set_callbacks(patience=patience, save_model=save_model)
 
         # spliting the training set into the inner-train and the inner-test set (validation set)
         X_inner_train, X_inner_test, y_inner_train, y_inner_test = train_test_split(self.X_train, self.y_train, test_size=val_rate, random_state=self.seed, stratify=self.y_train)
@@ -318,29 +305,10 @@ class Modality(object):
         dims.insert(0, X_inner_train.shape[1])
 
         # create autoencoder model
-        self.autoencoder, self.encoder = DNN_models.autoencoder(dims, act=act, latent_act=latent_act, output_act=output_act)
-        self.autoencoder.summary()
+        self.ae, self.encoder = DNN_models.autoencoder(dims, act=act, latent_act=latent_act, output_act=output_act)
 
-        # compile model
-        customised_adam = Adam(clipnorm=self.clipnorm_lim)
-        self.autoencoder.compile(optimizer=customised_adam, loss=loss)
-
-        # fit model
-        self.history = self.autoencoder.fit(X_inner_train, X_inner_train, epochs=epochs, batch_size=batch_size, callbacks=callbacks,
-                                            verbose=verbose, validation_data=(X_inner_test, X_inner_test))
-
-        if save_model:
-            # Plot the loss curves and save.
-            self.saveLossProgress()
-
-            # load best model
-            self.autoencoder = load_model(model_out_file)
-            layer_idx = int((len(self.autoencoder.layers) - 1) / 2)
-            self.encoder = (Model(self.autoencoder.layers[0].input, self.autoencoder.layers[layer_idx].output))
-
-            # applying the learned encoder to the entire training and the test sets.
-            self.X_train = self.encoder.predict(self.X_train)
-            self.X_test = self.encoder.predict(self.X_test)
+        # Train the AE
+        self.train_ae(batch_size, callbacks, epochs, loss, save_model, val_rate, verbose)
 
     def vae(self, dims=[8], epochs=10000, batch_size=100, verbose=2, loss='mse', output_act=False, act='relu',
             patience=25, beta=1.0, warmup=True, warmup_rate=0.01, val_rate=0.2, save_model=False, **kwargs):
@@ -411,20 +379,7 @@ class Modality(object):
             self.prefix += 'sig_'
 
         # callbacks for each epoch
-        callbacks = [EarlyStopping(monitor='val_loss', patience=patience, mode='min', verbose=1),
-                     self.TimeLimit_Callback(max_training_duration=self.max_training_duration)]
-
-        # Exports the model to file at each iteration.
-        # Due to early stopping, the final model is not necessarily the best model.
-        # Constant disk IO may slow down the training considerably.
-        if save_model:
-            model_out_file = self.output_dir + '/' + self.modelName + '.h5'
-            model_write_callback = ModelCheckpoint(model_out_file, monitor='val_loss', mode='min', verbose=1, save_best_only=True, save_weights_only=True),
-            callbacks.append(model_write_callback)
-
-            # clean up model checkpoint before use
-            if os.path.isfile(model_out_file):
-                os.remove(model_out_file)
+        callbacks = self.set_callbacks(patience=patience, save_model=save_model)
 
         # Add warm-up callback, if so requested
         if warmup:
@@ -448,19 +403,19 @@ class Modality(object):
         dims.insert(0, X_inner_train.shape[1])
 
         # create vae model
-        self.vae, self.encoder, self.decoder = DNN_models.variational_AE(dims, act=act, recon_loss=loss, output_act=output_act, beta=beta)
-        self.vae.summary()
+        self.ae, self.encoder, self.decoder = DNN_models.variational_AE(dims, act=act, recon_loss=loss, output_act=output_act, beta=beta)
+        self.ae.summary()
 
         # fit
-        self.history = self.vae.fit(X_inner_train, epochs=epochs, batch_size=batch_size, callbacks=callbacks, verbose=verbose, validation_data=(X_inner_test, None))
+        self.history = self.ae.fit(X_inner_train, epochs=epochs, batch_size=batch_size, callbacks=callbacks, verbose=verbose, validation_data=(X_inner_test, None))
 
         if save_model:
             # save loss progress
             self.saveLossProgress()
 
             # load best model
-            self.vae.load_weights(model_out_file)
-            self.encoder = self.vae.layers[1]
+            self.ae.load_weights(self.model_out_file)
+            self.encoder = self.ae.layers[1]
 
             # applying the learned encoder into the whole training and the test set.
             _, _, self.X_train = self.encoder.predict(self.X_train)
@@ -531,20 +486,7 @@ class Modality(object):
             self.prefix += 'sig_'
 
         # callbacks for each epoch
-        callbacks = [EarlyStopping(monitor='val_loss', patience=patience, mode='min', verbose=1),
-                     self.TimeLimit_Callback(max_training_duration=self.max_training_duration)]
-
-        # Exports the model to file at each iteration.
-        # Due to early stopping, the final model is not necessarily the best model.
-        # Constant disk IO may slow down the training considerably.
-        if save_model:
-            model_out_file = self.output_dir + '/' + self.modelName + '.h5'
-            model_write_callback = ModelCheckpoint(model_out_file, monitor='val_loss', mode='min', verbose=1, save_best_only=True, save_weights_only=True),
-            callbacks.append(model_write_callback)
-
-            # clean up model checkpoint before use
-            if os.path.isfile(model_out_file):
-                os.remove(model_out_file)
+        callbacks = self.set_callbacks(patience=patience, save_model=save_model)
 
         # create cae model
         if use_2D:
@@ -559,18 +501,65 @@ class Modality(object):
             self.X_train = vec2square(self.X_train)
             self.X_test = vec2square(self.X_test)
 
-            self.cae, self.encoder = DNN_models.conv_2D_autoencoder(input_len=self.X_train.shape[1], num_internal_layers=num_internal_layers,
-                                                                    act=act, output_act=output_act, rf_rate=rf_rate, st_rate=st_rate)
+            self.ae, self.encoder = DNN_models.conv_2D_autoencoder(input_len=self.X_train.shape[1], num_internal_layers=num_internal_layers,
+                                                                   act=act, output_act=output_act, rf_rate=rf_rate, st_rate=st_rate)
         else:
             # If using a 1D CAE, no such conversion is needed. Data enters as a vector as is.
-            self.cae, self.encoder = DNN_models.conv_1D_autoencoder(input_len=self.X_train.shape[1], num_internal_layers=num_internal_layers,
-                                                                    act=act, output_act=output_act, rf_rate=rf_rate, st_rate=st_rate)
+            self.ae, self.encoder = DNN_models.conv_1D_autoencoder(input_len=self.X_train.shape[1], num_internal_layers=num_internal_layers,
+                                                                   act=act, output_act=output_act, rf_rate=rf_rate, st_rate=st_rate)
 
-        self.cae.summary()
+        # Train the AE
+        self.train_ae(batch_size, callbacks, epochs, loss, save_model, val_rate, verbose)
+
+    def lstm(self, dims=[50], epochs=10000, batch_size=100, verbose=2, loss='mean_squared_error', latent_act=False,
+             output_act=False, act='relu', patience=20, val_rate=0.2, save_model=False, **kwargs):
+
+        # Generate an experiment identifier string for the output files
+        self.prefix += 'LSTM'
+        if loss == 'binary_crossentropy':
+            self.prefix += 'b'
+        if output_act:
+            self.prefix += 'T'
+        self.prefix += str(dims).replace(", ", "-") + '_'
+        if act == 'sigmoid':
+            self.prefix += 'sig_'
+
+        # callbacks for each epoch
+        callbacks = self.set_callbacks(patience=patience, save_model=save_model)
+
+        # insert input shape into dimension list
+        dims.insert(0, self.X_train.shape[1])
+
+        # Build the model
+        self.ae, self.encoder = LSTM.ae(dims=dims, act=act, latent_act=latent_act, output_act=output_act)
+
+        # Train the AE
+        self.train_ae(batch_size, callbacks, epochs, loss, save_model, val_rate, verbose)
+
+    def set_callbacks(self, patience, save_model):
+        callbacks = [EarlyStopping(monitor='val_loss', patience=patience, mode='min', verbose=0),
+                     self.TimeLimit_Callback(max_training_duration=self.max_training_duration)]
+
+        # Exports the model to file at each iteration.
+        # Due to early stopping, the final model is not necessarily the best model.
+        # Constant disk IO may slow down the training considerably.
+        if save_model:
+            self.model_out_file = self.output_dir + '/' + self.modelName + '.h5'
+            model_write_callback = ModelCheckpoint(self.model_out_file, monitor='val_loss', mode='min', verbose=1, save_best_only=True, save_weights_only=True),
+            callbacks.append(model_write_callback)
+
+            # clean up model checkpoint before use
+            if os.path.isfile(self.model_out_file):
+                os.remove(self.model_out_file)
+
+        return callbacks
+
+    def train_ae(self, batch_size, callbacks, epochs, loss, save_model, val_rate, verbose):
+        self.ae.summary()
 
         # compile
         customised_adam = Adam(clipnorm=self.clipnorm_lim)
-        self.cae.compile(optimizer=customised_adam, loss=loss)
+        self.ae.compile(optimizer=customised_adam, loss=loss)
 
         # spliting the training set into the inner-train and the inner-test set (validation set)
         X_inner_train, X_inner_test, y_inner_train, y_inner_test = train_test_split(self.X_train, self.y_train,
@@ -579,16 +568,21 @@ class Modality(object):
                                                                                     stratify=self.y_train)
 
         # fit
-        self.history = self.cae.fit(X_inner_train, X_inner_train, epochs=epochs, batch_size=batch_size, callbacks=callbacks, verbose=verbose, validation_data=(X_inner_test, X_inner_test, None))
+        self.history = self.ae.fit(X_inner_train, X_inner_train, epochs=epochs, batch_size=batch_size, callbacks=callbacks, verbose=verbose, validation_data=(X_inner_test, X_inner_test, None))
 
         if save_model:
             # save loss progress
             self.saveLossProgress()
 
             # load best model
-            self.cae.load_weights(model_out_file)
-            latent_layer_idx = int((len(self.cae.layers) - 1) / 2)
-            self.encoder = Model(self.cae.layers[0].input, self.cae.layers[latent_layer_idx].output)
+            self.ae.load_weights(self.model_out_file)
+
+            # Determine which layer within the model is the latent layer
+            for layer in self.ae.layers:
+                if 'bottleneck' in layer.name:
+                    latent_layer_idx = self.ae.layers.index(layer)
+
+            self.encoder = Model(self.ae.layers[0].input, self.ae.layers[latent_layer_idx].output)
 
             # applying the learned encoder into the whole training and the test set.
             self.X_train = self.encoder.predict(self.X_train)
@@ -775,7 +769,7 @@ def train_modality(Xfile, Yfile, AE_type, gradient_threshold=100, latent_dims=8,
         1st column should contain the sample identifiers, and should match those in
         Xfile. 2nd column should contain binary class of each sample. REQUIRED
 
-    AE_type : 'AE', 'CAE', 'VAE', 'GRP' or 'PCA' as str
+    AE_type : 'AE', 'CAE', 'VAE', 'LSTM', 'GRP' or 'PCA' as str
         The type of dimensionality reduction method to be used. REQUIRED
 
     gradient_threshold : float
@@ -826,12 +820,14 @@ def train_modality(Xfile, Yfile, AE_type, gradient_threshold=100, latent_dims=8,
     # Representation learning (Dimensionality reduction)
     AE_type = AE_type.upper()
     if AE_type in ['AE', 'SAE', 'DAE']:
-        m.ae(dims=latent_dims, loss='mse', verbose=0)
+        m.sae(dims=latent_dims, loss='mse', verbose=0)
     elif AE_type == 'CAE':
         m.cae(num_internal_layers=num_internal_layers, loss='mse', num_filters=num_filters,
               use_2D=use_2D_kernels, verbose=0)
     elif AE_type == 'VAE':
         m.vae(dims=latent_dims, loss='mse', verbose=0)
+    elif AE_type == 'LSTM':
+        m.lstm(dims=latent_dims)
     elif AE_type == 'GRP':
         m.grp()
     elif AE_type == 'PCA':

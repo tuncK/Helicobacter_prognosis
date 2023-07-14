@@ -78,7 +78,7 @@ def autoencoder(dims, act='relu', init='glorot_uniform', latent_act=False, outpu
 
     # latent layer
     # This is the bottleneck layer from which the  features are extracted.
-    h = Dense(dims[-1], activation=l_act, kernel_initializer=init, name='encoder_%d_bottle-neck' % (n_internal_layers))(h)
+    h = Dense(dims[-1], activation=l_act, kernel_initializer=init, name='encoder_%d_bottleneck' % (n_internal_layers))(h)
     y = h
 
     # internal layers of the decoder
@@ -163,7 +163,7 @@ def conv_1D_autoencoder(input_len, num_internal_layers, num_filters=3, use_max_p
     final_shape = K.int_shape(h)[1:]
 
     # bottleneck layer, features are extracted from here
-    h = Flatten(name='flatten')(h)
+    h = Flatten(name='bottleneck')(h)
     y = h
     y = Reshape(final_shape)(y)
 
@@ -263,7 +263,7 @@ def conv_2D_autoencoder(input_len, num_internal_layers, num_filters=3, use_max_p
     reshapeDim = K.int_shape(h)[1:]
 
     # bottle neck layer, features are extracted from here
-    h = Flatten()(h)
+    h = Flatten(name='bottleneck')(h)
     y = h
     y = Reshape(reshapeDim)(y)
 
