@@ -320,8 +320,8 @@ def variational_AE(dims, act='relu', init='glorot_uniform', output_act=False, re
     n_internal_layers = len(dims) - 2
 
     # build encoder model
-    inputs = Input(shape=(dims[0],), name='input')
-    h = inputs
+    x = Input(shape=(dims[0],), name='input')
+    h = x
 
     # internal layers in encoder
     for i in range(n_internal_layers):
@@ -358,48 +358,36 @@ def variational_AE(dims, act='relu', init='glorot_uniform', output_act=False, re
         epsilon = K.random_normal(shape=(batch, dim))
         return z_mean + z_sigma * epsilon
 
-    z = Lambda(sampling, output_shape=(dims[-1],), name='z')([z_mean, z_sigma])
-
-    # instantiate encoder model
-    encoder = Model(inputs, [z_mean, z_sigma, z], name='encoder')
-
-    # build decoder model
-    latent_inputs = Input(shape=(dims[-1],), name='z_sampling')
-    y = latent_inputs
+    z = Lambda(sampling, output_shape=(dims[-1],), name='z_bottleneck')([z_mean, z_sigma])
+    y = z
 
     # internal layers in decoder
     for i in range(n_internal_layers, 0, -1):
         y = Dense(dims[i], activation=act, kernel_initializer=init, name='decoder_%d' % i)(y)
 
-    outputs = Dense(dims[0], kernel_initializer=init, activation=o_act)(y)
-
-    # instantiate decoder model
-    decoder = Model(latent_inputs, outputs, name='decoder')
+    y = Dense(dims[0], kernel_initializer=init, activation=o_act, name='decoder_0')(y)
 
     # instantiate VAE model
-    outputs = decoder(encoder(inputs)[2])
-    vae = Model(inputs, outputs, name='vae_mlp')
+    encoder = Model(inputs=x, outputs=z, name='encoder')
+    decoder = Model(inputs=z, outputs=y, name='decoder')
+    vae = Model(inputs=x, outputs=y, name='vae')
 
     # loss function
     if recon_loss == 'mse':
-        reconstruction_loss = mse(inputs, outputs)
+        reconstruction_loss = mse(x, y) * dims[0]
     else:
-        reconstruction_loss = binary_crossentropy(inputs, outputs)
-
-    reconstruction_loss *= dims[0]
-
-    kl_loss = 1 + K.log(1e-8 + K.square(z_sigma)) - K.square(z_mean) - K.square(z_sigma)
-    kl_loss = K.sum(kl_loss, axis=-1)
-    kl_loss *= -0.5
-
-    vae_loss = K.mean(reconstruction_loss + (beta * kl_loss))
-    vae.add_loss(vae_loss)
-
-    vae.compile(optimizer='adam')
+        reconstruction_loss = binary_crossentropy(x, y) * dims[0]
 
     vae.metrics.append(K.mean(reconstruction_loss))
     vae.metrics_names.append("recon_loss")
+
+    kl_loss = 1 + K.log(1e-8 + K.square(z_sigma)) - K.square(z_mean) - K.square(z_sigma)
+    kl_loss = -0.5 * K.sum(kl_loss, axis=-1)
+
     vae.metrics.append(K.mean(beta * kl_loss))
     vae.metrics_names.append("kl_loss")
+
+    vae_loss = K.mean(reconstruction_loss + (beta * kl_loss))
+    vae.add_loss(vae_loss)
 
     return vae, encoder, decoder

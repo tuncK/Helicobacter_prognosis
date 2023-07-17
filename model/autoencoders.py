@@ -361,7 +361,7 @@ class Modality(object):
             hyperparameter tuning might slow down the operations. Enabling during parallel execution
             might also result in a race condition if target file names are not distinct.
         """
-
+        save_model=True
         # Generate an experiment identifier string for the output files
         if patience != 25:
             self.prefix += 'p' + str(patience) + '_'
@@ -393,33 +393,14 @@ class Modality(object):
             warm_up_cb = LambdaCallback(on_epoch_end=lambda epoch, logs: [warm_up(epoch)])
             callbacks.append(warm_up_cb)
 
-        # spliting the training set into the inner-train and the inner-test set (validation set)
-        X_inner_train, X_inner_test, y_inner_train, y_inner_test = train_test_split(self.X_train, self.y_train,
-                                                                                    test_size=val_rate,
-                                                                                    random_state=self.seed,
-                                                                                    stratify=self.y_train)
-
         # insert input shape into dimension list
-        dims.insert(0, X_inner_train.shape[1])
+        dims.insert(0, self.X_train.shape[1])
 
         # create vae model
         self.ae, self.encoder, self.decoder = DNN_models.variational_AE(dims, act=act, recon_loss=loss, output_act=output_act, beta=beta)
-        self.ae.summary()
 
-        # fit
-        self.history = self.ae.fit(X_inner_train, epochs=epochs, batch_size=batch_size, callbacks=callbacks, verbose=verbose, validation_data=(X_inner_test, None))
-
-        if save_model:
-            # save loss progress
-            self.saveLossProgress()
-
-            # load best model
-            self.ae.load_weights(self.model_out_file)
-            self.encoder = self.ae.layers[1]
-
-            # applying the learned encoder into the whole training and the test set.
-            _, _, self.X_train = self.encoder.predict(self.X_train)
-            _, _, self.X_test = self.encoder.predict(self.X_test)
+        # Train the AE
+        self.train_ae(batch_size, callbacks, epochs, loss, save_model, val_rate, verbose)
 
     # Convolutional Autoencoder
     def cae(self, num_internal_layers=1, num_filters=3, use_2D=False, epochs=10000, batch_size=100, verbose=2,
@@ -868,4 +849,4 @@ def train_modality(Xfile, Yfile, AE_type, gradient_threshold=100, latent_dims=8,
 
 
 if __name__ == '__main__':
-    train_modality(Xfile='../dm_data/IBD_X_abundance.tsv', Yfile='../dm_data/IBD_Y.tsv', AE_type='SAE')
+    train_modality(Xfile='../dm_data/IBD_X_abundance.tsv', Yfile='../dm_data/IBD_Y.tsv', latent_dims=[7, 5], AE_type='VAE')
