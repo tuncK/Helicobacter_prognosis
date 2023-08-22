@@ -88,7 +88,7 @@ def autoencoder(dims, act='relu', init='glorot_uniform', latent_act=False, outpu
     # output
     y = Dense(dims[0], activation=o_act, kernel_initializer=init, name='decoder_0')(y)
 
-    return Model(inputs=x, outputs=y, name='AE'), Model(inputs=x, outputs=h, name='encoder')
+    return Model(inputs=x, outputs=y, name='SAE'), Model(inputs=x, outputs=h, name='encoder')
 
 
 def conv_1D_autoencoder(input_len, num_internal_layers, num_filters=3, use_max_pooling=False,
@@ -154,7 +154,6 @@ def conv_1D_autoencoder(input_len, num_internal_layers, num_filters=3, use_max_p
 
         stride_size = max(1, int(rf_size * st_rate))
         stride_size_list.append(stride_size)
-        print("rf_size: %d, st_size: %d" % (rf_size, stride_size))
 
         h = Conv1D(filters=num_filters, kernel_size=rf_size, strides=stride_size, activation=act, padding='same', kernel_initializer=init, name='encoder_conv_%d' % i)(h)
         if use_max_pooling:
@@ -185,7 +184,7 @@ def conv_1D_autoencoder(input_len, num_internal_layers, num_filters=3, use_max_p
     if cropping_size > 0:
         y = Cropping1D(cropping=(0, cropping_size), name='crop')(y)
 
-    return Model(inputs=x, outputs=y, name='CAE'), Model(inputs=x, outputs=h, name='encoder')
+    return Model(inputs=x, outputs=y, name='CAE_1D'), Model(inputs=x, outputs=h, name='encoder')
 
 
 def conv_2D_autoencoder(input_len, num_internal_layers, num_filters=3, use_max_pooling=False,
@@ -254,7 +253,6 @@ def conv_2D_autoencoder(input_len, num_internal_layers, num_filters=3, use_max_p
 
         stride_size = max(1, int(rf_size * st_rate))
         stride_size_list.append(stride_size)
-        print("rf_size: %d, st_size: %d" % (rf_size, stride_size))
 
         h = Conv2D(filters=num_filters, kernel_size=rf_size, strides=stride_size, activation=act, padding='same', kernel_initializer=init, name='encoder_conv_%d' % i)(h)
         if use_max_pooling:
@@ -285,7 +283,7 @@ def conv_2D_autoencoder(input_len, num_internal_layers, num_filters=3, use_max_p
     if cropping_size > 0:
         y = Cropping2D(cropping=((0, cropping_size), (0, cropping_size)), name='crop')(y)
 
-    return Model(inputs=x, outputs=y, name='CAE'), Model(inputs=x, outputs=h, name='encoder')
+    return Model(inputs=x, outputs=y, name='CAE_2D'), Model(inputs=x, outputs=h, name='encoder')
 
 
 # Variational Autoencoder
@@ -370,7 +368,7 @@ def variational_AE(dims, act='relu', init='glorot_uniform', output_act=False, re
     # instantiate VAE model
     encoder = Model(inputs=x, outputs=z, name='encoder')
     decoder = Model(inputs=z, outputs=y, name='decoder')
-    vae = Model(inputs=x, outputs=y, name='vae')
+    vae = Model(inputs=x, outputs=y, name='VAE')
 
     # loss function
     if recon_loss == 'mse':

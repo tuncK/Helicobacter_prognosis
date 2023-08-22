@@ -39,3 +39,10 @@ pip install tensorflow-cpu==2.12.0
 pip install tensorflow==2.12.0
 ```
 
+**Step 7:** Set environment variables
+* Due to various incompatibility reasons, the installation above may not work out of the box or execute with a lower performance than it could. It might generate some warnings such as "tensorrt not found". If so, set the following environment variables. This makes them persistent within this conda env each time it is activated:
+```
+conda env config vars set PATH="$PATH:/usr/local/nvidia/bin:/usr/local/cuda/bin"
+conda env config vars set LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$CONDA_PREFIX/lib/python3.11/site-packages/tensorrt_libs/"
+```
+

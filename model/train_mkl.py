@@ -18,7 +18,7 @@ def train_1_AE(Xfile, Yfile, latent_filename):
     # This will try many hyperparam combinations.
     # Despite using BOHB etc., many models will be trained, so might take a while.
     best_conf = startBOHB.start_BOHB(min_budget=60, max_budget=300, Xfile=Xfile,
-                                     Yfile=Yfile, n_workers=6, n_iterations=10)
+                                     Yfile=Yfile, n_workers=1, n_iterations=10)
 
     # This time, we need to save the result (and feed into the classifier later on)
     best_conf = MyWorker.convert_hyper_params(best_conf)
@@ -29,17 +29,19 @@ def train_1_AE(Xfile, Yfile, latent_filename):
 
     # Decide on which AE worked the best and use.
     if best_conf['AE_type'] in ['AE', 'SAE', 'DAE']:
-        ae_func = m.ae
+        ae_func = m.sae
     elif best_conf['AE_type'] == 'CAE':
         ae_func = m.cae
     elif best_conf['AE_type'] == 'VAE':
         ae_func = m.vae
+    elif best_conf['AE_type'] == 'LSTM':
+        ae_func = m.lstm
     else:
         raise NameError('Autoencoder type %s is not available' % best_conf['AE_type'])
 
     # Perform representation learning without time limit
     # with best AE type and best hyperparams
-    print('Started full learning with best AE hyperparams: %s' % best_conf)
+    print('Started full learning with the best AE hyperparams: %s' % best_conf)
     ae_func(loss='mse', verbose=0, save_model=True, **best_conf)
 
     # Write the learned representation of the training set as a file
@@ -97,7 +99,7 @@ def run_MKL(combined_file, modality_dims, Yfile):
 # Features should be on the rows, 1st column with feature label
 # Samples should be on the columns, each column should have a common sample name
 data_tables = [
-    '../dm_data/Cirrhosis_X_abundance.tsv',
+        '../dm_data/Cirrhosis_X_abundance.tsv',
     #   '../dm_data/Cirrhosis_X_marker.tsv',
     #   '../dm_data/Colorectal_X_abundance.tsv',
     #   '../dm_data/Colorectal_X_marker.tsv',

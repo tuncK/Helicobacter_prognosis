@@ -32,7 +32,6 @@ from skopt.space import Real, Categorical
 # importing keras
 import keras
 import keras.backend as K
-from keras.wrappers.scikit_learn import KerasClassifier
 from keras.callbacks import EarlyStopping, ModelCheckpoint, LambdaCallback
 from keras.models import Model
 from keras.optimizers import Adam
@@ -110,6 +109,7 @@ class Modality(object):
         self.dataset_ids = [x.split('.')[0] for x in list(raw)]
 
         # load data
+        # self.X_train = raw.transpose().values.astype('int32')
         self.X_train = raw.transpose().values.astype(dtype)
 
         # put nothing or zeros for y_train, y_test, and X_test, at least temporarily
@@ -361,7 +361,7 @@ class Modality(object):
             hyperparameter tuning might slow down the operations. Enabling during parallel execution
             might also result in a race condition if target file names are not distinct.
         """
-        save_model=True
+
         # Generate an experiment identifier string for the output files
         if patience != 25:
             self.prefix += 'p' + str(patience) + '_'
@@ -492,18 +492,20 @@ class Modality(object):
         # Train the AE
         self.train_ae(batch_size, callbacks, epochs, loss, save_model, val_rate, verbose)
 
-    def lstm(self, dims=[50], epochs=10000, batch_size=100, verbose=2, loss='mean_squared_error', latent_act=False,
-             output_act=False, act='relu', patience=20, val_rate=0.2, save_model=False, **kwargs):
+    def lstm(self, dims=[50], window_size=4096, epochs=10000, batch_size=100, verbose=2, loss='mean_squared_error',
+             patience=20, val_rate=0.2, save_model=False, **kwargs):
 
         # Generate an experiment identifier string for the output files
         self.prefix += 'LSTM'
         if loss == 'binary_crossentropy':
             self.prefix += 'b'
-        if output_act:
-            self.prefix += 'T'
         self.prefix += str(dims).replace(", ", "-") + '_'
-        if act == 'sigmoid':
-            self.prefix += 'sig_'
+
+        # GPU may run out of memory if the data has too many dimensions. Here we chop it into smaller pieces.
+        print('Xdata shape before window clipping: ', self.X_train.shape)
+        (self.X_train, self.y_train) = LSTM.clip_windows(self.X_train, self.y_train, window_size=window_size)
+        (self.X_test, self.y_test) = LSTM.clip_windows(self.X_test, self.y_test, window_size=window_size)
+        print('Xdata shape after window clipping: ', self.X_train.shape)
 
         # callbacks for each epoch
         callbacks = self.set_callbacks(patience=patience, save_model=save_model)
@@ -512,7 +514,7 @@ class Modality(object):
         dims.insert(0, self.X_train.shape[1])
 
         # Build the model
-        self.ae, self.encoder = LSTM.ae(dims=dims, act=act, latent_act=latent_act, output_act=output_act)
+        self.ae, self.encoder = LSTM.ae(dims=dims)
 
         # Train the AE
         self.train_ae(batch_size, callbacks, epochs, loss, save_model, val_rate, verbose)
@@ -707,8 +709,7 @@ class Modality(object):
                 'numUnits': [10, 30, 50, 100],
                 'dropout_rate': [0.1, 0.3]
             }]
-            model = KerasClassifier(build_fn=DNN_models.mlp_model, input_dim=self.X_train.shape[1], verbose=0)
-            clf = GridSearchCV(estimator=model, param_grid=hyper_parameters, cv=StratifiedKFold(cv, shuffle=True), scoring=scoring, n_jobs=n_jobs, verbose=verbose)
+            clf = GridSearchCV(estimator=DNN_models.mlp_model(input_dim=self.X_train.shape[1]), param_grid=hyper_parameters, cv=StratifiedKFold(cv, shuffle=True), scoring=scoring, n_jobs=n_jobs, verbose=verbose)
 
         # Perform CV against the AE-compressed data
         clf.fit(self.X_train, self.y_train)
@@ -795,7 +796,7 @@ def train_modality(Xfile, Yfile, AE_type, gradient_threshold=100, latent_dims=8,
     m.t_start = time.time()
 
     # Preprocess dimensions: single int vs. list of ints
-    if type(latent_dims) == int:
+    if isinstance(latent_dims, int):
         latent_dims = [latent_dims]
 
     # Representation learning (Dimensionality reduction)
@@ -849,4 +850,4 @@ def train_modality(Xfile, Yfile, AE_type, gradient_threshold=100, latent_dims=8,
 
 
 if __name__ == '__main__':
-    train_modality(Xfile='../dm_data/IBD_X_abundance.tsv', Yfile='../dm_data/IBD_Y.tsv', latent_dims=[7, 5], AE_type='VAE')
+    train_modality(Xfile='../dm_data/IBD_X_marker.tsv', Yfile='../dm_data/IBD_Y.tsv', latent_dims=[64], AE_type='LSTM')
