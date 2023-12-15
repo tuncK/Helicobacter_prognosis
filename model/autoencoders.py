@@ -76,8 +76,7 @@ class Modality(object):
     def __init__(self, Xfile, Yfile, clipnorm_lim=1, seed=0, max_training_duration=np.inf, **kwargs):
         self.t_start = time.time()
         self.Xfilename = str(Xfile)
-        self.Yfilename = str(Yfile)
-        self.data = self.Xfilename.split('/')[-1].split('_')[0].split('.')[0]
+        self.Yfilename = str(Yfile)      
         self.seed = seed
         self.max_training_duration = max_training_duration
         self.prefix = ''
@@ -85,12 +84,13 @@ class Modality(object):
         self.clipnorm_lim = clipnorm_lim
         self.dataset_ids = None
 
-        params = self.data + '_' + str(self.seed) + '_' + str(clipnorm_lim)
-        self.modelName = '%s' % params
+        condition_name = self.Xfilename.split('/')[-1].split('_')[0].split('.')[0]
+        dataset_name = self.Xfilename.split('/')[-1].split('_')[-1].split('.')[0]
+        self.modelName = dataset_name + '_' + str(self.seed) + '_' + str(clipnorm_lim)
 
-        self.output_dir = '../results/'
-        if not os.path.isdir(self.output_dir):
-            os.mkdir(self.output_dir)
+        # Create the output (sub)folder if necessary
+        self.output_dir = '../results/' + condition_name
+        os.makedirs(self.output_dir, exist_ok=True)
 
     def load_X_data(self, dtype=None):
         """
@@ -233,7 +233,7 @@ class Modality(object):
 
     # Shallow Autoencoder & Deep Autoencoder
     def sae(self, dims=[50], epochs=10000, batch_size=100, verbose=2, loss='mean_squared_error', latent_act=False,
-            output_act=False, act='relu', patience=20, val_rate=0.2, save_model=False, **kwargs):
+            output_act=False, act='relu', patience=20, val_rate=0.2, save_model=True, **kwargs): # save_model=False epochs=10000
 
         """
         Train the shallow (1-layer) or deep (>1 layers) auto-encoder
@@ -492,7 +492,7 @@ class Modality(object):
         # Train the AE
         self.train_ae(batch_size, callbacks, epochs, loss, save_model, val_rate, verbose)
 
-    def lstm(self, dims=[50], window_size=4096, epochs=10000, batch_size=100, verbose=2, loss='mean_squared_error',
+    def lstm(self, dims=[50], window_size=101, epochs=10000, batch_size=100, verbose=2, loss='mean_squared_error',
              patience=20, val_rate=0.2, save_model=False, **kwargs):
 
         # Generate an experiment identifier string for the output files
@@ -580,21 +580,34 @@ class Modality(object):
             print("y_test.shape: ", self.y_test.shape)
 
     # ploting loss progress over epochs
-    def saveLossProgress(self):
+    def saveLossProgress(self, language='DE'):
         loss_collector, loss_max_atTheEnd = self.saveLossProgress_ylim()
 
         # save loss progress - train and val loss only
-        plt.rcParams.update({'font.size': 12})
+        plt.rcParams.update({'font.size': 14})
         plt.plot(self.history.history['loss'])
         plt.plot(self.history.history['val_loss'])
-        plt.title('Autoencoder model loss')
-        plt.ylabel('loss')
-        plt.yscale('log')
-        # plt.ylim(min(loss_collector)*0.9, loss_max_atTheEnd * 2.0)
-        plt.xlabel('Epoch')
-        plt.legend(['train', 'val.'], loc='upper right')
+        # plt.ylim(min(loss_collector)*0.9, loss_max_atTheEnd * 2.0)    
+        # plt.yscale('log')
+
+        if language=='EN':
+            plt.title('Autoencoder model loss')
+            plt.ylabel('Loss')
+            plt.xlabel('Epoch')
+            plt.legend(['train', 'val.'], loc='upper right')
+        else:
+            plt.title('Autoencoder Modellverlust')
+            plt.ylabel('log(Modellverlust)')
+            plt.xlabel('Epoche')
+            plt.xlim(0, 600)
+            plt.yscale('log')
+            plt.legend(['Training', 'Validierung'], loc='upper right')
+
         plt.savefig(self.output_dir + '/' + self.modelName + '.png')
         plt.close()
+        
+        print(self.history.history['loss'])
+        print(self.history.history['val_loss'])
 
     # supporting loss plot
     def saveLossProgress_ylim(self):
@@ -850,4 +863,8 @@ def train_modality(Xfile, Yfile, AE_type, gradient_threshold=100, latent_dims=8,
 
 
 if __name__ == '__main__':
-    train_modality(Xfile='../dm_data/IBD_X_marker.tsv', Yfile='../dm_data/IBD_Y.tsv', latent_dims=[64], AE_type='LSTM')
+#    for dataset in ['Cirrhosis', 'Colorectal', 'IBD', 'T2D', 'WT2D']:
+    for dataset in ['Colorectal']:
+        train_modality(Xfile='../dm_data/%s_X_marker.tsv' % dataset, Yfile='../dm_data/%s_Y.tsv' % dataset, latent_dims=[512], AE_type='AE')
+        
+    # train_modality(Xfile='../dm_data/Cirrhosis_X_abundance.tsv', Yfile='../dm_data/Cirrhosis_Y.tsv', latent_dims=[256], AE_type='AE')

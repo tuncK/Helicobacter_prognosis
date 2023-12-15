@@ -17,7 +17,7 @@ def train_1_AE(Xfile, Yfile, latent_filename):
 
     # This will try many hyperparam combinations.
     # Despite using BOHB etc., many models will be trained, so might take a while.
-    best_conf = startBOHB.start_BOHB(min_budget=60, max_budget=300, Xfile=Xfile,
+    best_conf = startBOHB.start_BOHB(min_budget=120, max_budget=600, Xfile=Xfile,
                                      Yfile=Yfile, n_workers=1, n_iterations=10)
 
     # This time, we need to save the result (and feed into the classifier later on)
@@ -100,37 +100,42 @@ def run_MKL(combined_file, modality_dims, Yfile):
 # Samples should be on the columns, each column should have a common sample name
 data_tables = [
         '../dm_data/Cirrhosis_X_abundance.tsv',
-    #   '../dm_data/Cirrhosis_X_marker.tsv',
-    #   '../dm_data/Colorectal_X_abundance.tsv',
-    #   '../dm_data/Colorectal_X_marker.tsv',
-    #   '../dm_data/IBD_X_abundance.tsv',
-    #   '../dm_data/IBD_X_marker.tsv',
-    #   '../dm_data/T2D_X_abundance.tsv',
-    #   '../dm_data/T2D_X_marker.tsv',
-    #   '../dm_data/WT2D_X_abundance.tsv',
-    #   '../dm_data/WT2D_X_marker.tsv'
+        '../dm_data/Cirrhosis_X_marker.tsv',
+        '../dm_data/Colorectal_X_abundance.tsv',
+        '../dm_data/Colorectal_X_marker.tsv',
+        '../dm_data/IBD_X_abundance.tsv',
+        '../dm_data/IBD_X_marker.tsv',
+        '../dm_data/T2D_X_abundance.tsv',
+        '../dm_data/T2D_X_marker.tsv',
+        '../dm_data/WT2D_X_abundance.tsv',
+        '../dm_data/WT2D_X_marker.tsv'
 ]
 
-Yfile = '../dm_data/Cirrhosis_Y.tsv'
-# Yfile = '../dm_data/Colorectal_Y.tsv'
-# Yfile = '../dm_data/IBD_Y.tsv'
-# Yfile = '../dm_data/T2D_Y.tsv'
-# Yfile = '../dm_data/WT2D_Y.tsv'
-
+data_tables = data_tables[:2]
 
 # Names for the AE-compressed data tables
-X_latent_files = ['../results/' + x.split('/')[-1].split('.')[0] + '_latent.tsv' for x in data_tables]
+X_latent_files = ['../results/' + x.split('/')[-1].split('_')[0] + '/' + x.split('/')[-1].split('_')[-1].split('.')[0] + '_latent.tsv' for x in data_tables]
 
 # Train an AE for each modality separately.
+# The latent representations will be saved in file, and can be used later on.
 for i in range(len(data_tables)):
     print('Representation learning on %s' % data_tables[i])
     train_1_AE(Xfile=data_tables[i], Yfile=None, latent_filename=X_latent_files[i])
 
-# Concatenate latent dims of each modality and write to file
-combined_filename = '../results/all_latent.tsv'
-modality_dims = combine_modalities(X_latent_files, combined_filename)
+print('All AEs were trained')
 
-# Train MKL on the file with all latent dims combined.
-run_MKL(combined_file=combined_filename, modality_dims=modality_dims, Yfile=Yfile)
+
+# Group the different modalities for the same dataset and traing a classifier
+for i in range(0, len(X_latent_files), 2):
+    # Concatenate latent dims of 2 modalities and write to a new file
+    file1 = X_latent_files[i]
+    file2 = X_latent_files[i+1]
+    combined_filename = '/'.join(file1.split('/')[:-1]) + '/combined_latent.tsv'
+    modality_dims = combine_modalities(X_latent_files=[file1, file2], combined_filename=combined_filename)
+
+    # Train MKL on the file with all latent dims combined.
+    dataset_name = file1.split('/')[-2]
+    Yfile = '../dm_data/' + dataset_name + '_Y.tsv'
+    run_MKL(combined_file=combined_filename, modality_dims=modality_dims, Yfile=Yfile)
 
 print('All done')
